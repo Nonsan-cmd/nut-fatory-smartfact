@@ -1,5 +1,5 @@
-streamlit
-pandas
+streamlit==1.29.0
+pandas==2.1.4
 psycopg2-binary==2.9.9
 openpyxl
 xlsxwriter
@@ -14,10 +14,4 @@ seaborn
 plotly
 SQLAlchemy
 python-dotenv
-firebase-admin
-streamlit-aggrid
-redis
-pyyaml
-pymongo
-requests-oauthlib
-pycryptodome
+streamlit-aggrid==0.3.3
