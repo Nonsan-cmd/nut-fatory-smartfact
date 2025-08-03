@@ -2,58 +2,72 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 from datetime import date
+from psycopg2.extras import RealDictCursor
 
-# === Connection ===
+# === CONFIG ===
+st.set_page_config(page_title="Production Record", layout="wide")
+
+# === CONNECTION ===
+@st.cache_resource
 def get_connection():
-    return psycopg2.connect(st.secrets["postgres"]["conn_str"])
+    return psycopg2.connect(st.secrets["postgres"]["conn_str"], cursor_factory=RealDictCursor)
 
-# === Load Master Data ===
-@st.cache_data
-def load_master_data():
+# === LOAD MASTER DATA ===
+@st.cache_data(ttl=600)
+def load_machines():
     with get_connection() as conn:
-        machines_df = pd.read_sql("SELECT * FROM machine_list WHERE is_active = TRUE ORDER BY machine_code", conn)
-        parts_df = pd.read_sql("SELECT * FROM part_master WHERE is_active = TRUE ORDER BY part_no", conn)
-    return machines_df, parts_df
+        return pd.read_sql("SELECT * FROM machine_list WHERE is_active = TRUE ORDER BY machine_code", conn)
 
-# === Insert Function ===
+@st.cache_data(ttl=600)
+def load_parts():
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM part_master WHERE is_active = TRUE ORDER BY part_no", conn)
+
+# === INSERT ===
 def insert_data(data):
     with get_connection() as conn:
         cur = conn.cursor()
-        insert_query = """
-            INSERT INTO production_log 
-            (log_date, shift, machine_id, part_id, plan_qty, actual_qty, defect_qty, remark, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        cur.execute(insert_query, data)
+        cur.execute("""
+            INSERT INTO production_log (
+                log_date, shift, machine_id, part_id, plan_qty, actual_qty, defect_qty, remark, created_by
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, data)
         conn.commit()
 
-# === UI Layout ===
-st.markdown("## 📝 บันทึกข้อมูลการผลิต")
-machines_df, parts_df = load_master_data()
+# === MAIN UI ===
+st.title("📝 Production Record Log")
+
+machines_df = load_machines()
+parts_df = load_parts()
 
 with st.form("production_form"):
     col1, col2 = st.columns(2)
 
     with col1:
-        log_date = st.date_input("วันที่", value=date.today())
-        selected_part = st.selectbox("Part No", parts_df["part_no"].unique())
-        shift = st.selectbox("กะ", ["Day", "Night"])
-        plan_qty = st.number_input("Plan จำนวน", min_value=0, step=1)
+        log_date = st.date_input("📅 วันที่", value=date.today())
+        selected_part = st.selectbox("🔩 เลือก Part No", parts_df["part_no"])
+        shift = st.selectbox("🕐 กะการทำงาน", ["Day", "Night"])
+        plan_qty = st.number_input("🎯 จำนวนเป้าหมาย (Plan)", min_value=0, step=1)
 
     with col2:
-        selected_machine = st.selectbox("เครื่องจักร", machines_df["machine_code"] + " - " + machines_df["machine_name"])
-        actual_qty = st.number_input("Actual จำนวน", min_value=0, step=1)
-        defect_qty = st.number_input("Defect จำนวน", min_value=0, step=1)
+        selected_machine = st.selectbox("⚙️ เลือกเครื่องจักร", machines_df["machine_code"] + " - " + machines_df["machine_name"])
+        actual_qty = st.number_input("✅ จำนวนผลิตจริง (Actual)", min_value=0, step=1)
+        defect_qty = st.number_input("❌ ของเสีย (Defect)", min_value=0, step=1)
 
-        # แสดงชื่อแผนก
-        machine_code = selected_machine.split(" - ")[0]
-        department = machines_df[machines_df["machine_code"] == machine_code]["department"].values[0]
-        st.text_input("แผนก", value=department, disabled=True)
+        # === Auto-fill Department ===
+        if selected_machine:
+            machine_code = selected_machine.split(" - ")[0]
+            try:
+                department = machines_df[machines_df["machine_code"] == machine_code]["department"].values[0]
+                st.text_input("🏭 แผนก", value=department, disabled=True)
+            except:
+                st.warning("ไม่พบข้อมูลแผนก")
 
-    remark = st.text_area("หมายเหตุ")
-    created_by = st.text_input("ชื่อผู้บันทึก", max_chars=50)
+    remark = st.text_area("📝 หมายเหตุเพิ่มเติม")
+    created_by = st.text_input("👷‍♂️ ชื่อผู้บันทึก", max_chars=50)
 
     submitted = st.form_submit_button("💾 บันทึกข้อมูล")
+
     if submitted:
         try:
             part_id = int(parts_df.loc[parts_df["part_no"] == selected_part, "id"].values[0])
@@ -61,14 +75,14 @@ with st.form("production_form"):
 
             data = (
                 str(log_date),
-                shift,
+                str(shift),
                 machine_id,
                 part_id,
                 int(plan_qty),
                 int(actual_qty),
                 int(defect_qty),
-                remark,
-                created_by
+                str(remark),
+                str(created_by)
             )
 
             insert_data(data)
