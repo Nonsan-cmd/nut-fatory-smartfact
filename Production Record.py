@@ -29,7 +29,6 @@ def insert_production_log(data):
         conn.commit()
 
 # === UI ===
-st.set_page_config(page_title="Production Record", layout="centered")
 st.header("📋 บันทึกข้อมูลการผลิต")
 
 machines_df = get_machines()
@@ -40,15 +39,18 @@ with st.form("form_production"):
     with col1:
         log_date = st.date_input("📅 วันที่", value=date.today())
         shift = st.selectbox("🕐 กะ", ["Day", "Night"])
+
         machine_display_list = machines_df["machine_code"] + " - " + machines_df["machine_name"]
         selected_machine = st.selectbox("⚙️ เครื่องจักร", machine_display_list)
 
+        # Extract machine_id + department
         machine_row = machines_df[machine_display_list == selected_machine]
         if not machine_row.empty:
-            machine_id = int(machine_row["id"].values[0].item())
+            machine_id = int(machine_row["id"].values[0])
             department = machine_row["department"].values[0]
+            st.text_input("🏭 แผนก", value=department, disabled=True)
         else:
-            st.stop()
+            st.warning("ไม่พบข้อมูลเครื่องจักร")
 
     with col2:
         selected_part = st.selectbox("🔩 Part No", parts_df["part_no"])
@@ -68,19 +70,18 @@ with st.form("form_production"):
                 st.error("❌ ไม่พบ Part No ที่เลือก")
                 st.stop()
 
-            part_id = int(part_row["id"].values[0].item())
+            part_id = int(part_row["id"].values[0])
 
             data = {
                 "log_date": log_date,
                 "shift": shift,
-                "machine_id": int(machine_id),
-                "part_id": int(part_id),
+                "machine_id": machine_id,
+                "part_id": part_id,
                 "plan_qty": int(plan_qty),
                 "actual_qty": int(actual_qty),
                 "defect_qty": int(defect_qty),
                 "remark": remark,
                 "created_by": created_by,
-                "department": department,
                 "created_at": datetime.now()
             }
 
