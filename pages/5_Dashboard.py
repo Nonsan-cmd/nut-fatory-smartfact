@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
-from datetime import date
 import plotly.express as px
+from datetime import date
 
 # === Connect to Supabase ===
 def get_connection():
@@ -15,6 +15,7 @@ def load_efficiency_report(start_date, end_date):
             SELECT 
                 ml.department,
                 pm.part_no,
+                pm.std_cycle_time_sec,
                 SUM(COALESCE(pl.plan_qty, 0)) AS plan_qty,
                 SUM(COALESCE(pl.actual_qty, 0)) AS actual_qty,
                 SUM(COALESCE(pl.defect_qty, 0)) AS defect_qty,
@@ -33,12 +34,12 @@ def load_efficiency_report(start_date, end_date):
             INNER JOIN machine_list ml ON pl.machine_id = ml.id
             INNER JOIN part_master pm ON pl.part_id = pm.id
             WHERE pl.log_date BETWEEN %s AND %s
-            GROUP BY ml.department, pm.part_no
+            GROUP BY ml.department, pm.part_no, pm.std_cycle_time_sec
             ORDER BY ml.department, pm.part_no
         """
         return pd.read_sql(sql, conn, params=(start_date, end_date))
 
-# === UI ===
+# === UI Layout ===
 st.set_page_config(page_title="Dashboard Efficiency Report", layout="wide")
 st.title("📊 Dashboard Efficiency Report")
 
@@ -49,41 +50,52 @@ with col2:
     end_date = st.date_input("📅 End Date", value=date.today())
 
 if start_date > end_date:
-    st.warning("📛 Start Date ต้องน้อยกว่าหรือเท่ากับ End Date")
-else:
-    df = load_efficiency_report(start_date, end_date)
+    st.warning("⚠️ Start Date ต้องน้อยกว่าหรือเท่ากับ End Date")
+    st.stop()
 
-    if df.empty:
-        st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
-    else:
-        # === Filter by Department
-        departments = df["department"].unique().tolist()
-        selected_depts = st.multiselect("🧭 เลือกแผนก", departments, default=departments)
+df = load_efficiency_report(start_date, end_date)
 
-        df_filtered = df[df["department"].isin(selected_depts)]
+if df.empty:
+    st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
+    st.stop()
 
-        # === Show Summary Table
-        st.subheader("📋 รายงาน Efficiency")
-        st.dataframe(df_filtered, use_container_width=True)
+# === Filter by Department ===
+departments = df["department"].unique().tolist()
+selected_depts = st.multiselect("เลือกแผนก", departments, default=departments)
+filtered_df = df[df["department"].isin(selected_depts)]
 
-        # === Chart: Efficiency by Part
-        st.subheader("📈 กราฟเปรียบเทียบ Efficiency ราย Part No.")
-        fig = px.bar(
-            df_filtered,
-            x="part_no",
-            y="efficiency",
-            color="department",
-            title="Efficiency (%) by Part No",
-            labels={"efficiency": "Efficiency (%)", "part_no": "Part No"},
-            text_auto=".1f"
-        )
-        fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
+# === Show Table ===
+st.markdown("### 📋 Efficiency Summary Table")
+st.dataframe(filtered_df, use_container_width=True)
 
-        # === Export Button
-        st.download_button(
-            label="📥 ดาวน์โหลด Excel",
-            data=df_filtered.to_csv(index=False).encode("utf-8-sig"),
-            file_name="efficiency_report_filtered.csv",
-            mime="text/csv"
-        )
+# === Chart 1: Efficiency by Part ===
+fig1 = px.bar(
+    filtered_df,
+    x="part_no",
+    y="efficiency",
+    color="department",
+    title="📈 Efficiency (%) by Part No",
+    text="efficiency"
+)
+fig1.update_layout(yaxis_title="Efficiency (%)", xaxis_title="Part No", height=400)
+st.plotly_chart(fig1, use_container_width=True)
+
+# === Chart 2: Downtime by Part ===
+fig2 = px.bar(
+    filtered_df,
+    x="part_no",
+    y="downtime_min",
+    color="department",
+    title="🛠️ Downtime (min) by Part No",
+    text="downtime_min"
+)
+fig2.update_layout(yaxis_title="Downtime (min)", xaxis_title="Part No", height=400)
+st.plotly_chart(fig2, use_container_width=True)
+
+# === Export Button ===
+st.download_button(
+    label="📥 ดาวน์โหลด Excel",
+    data=filtered_df.to_csv(index=False).encode("utf-8-sig"),
+    file_name="efficiency_report.csv",
+    mime="text/csv"
+)
