@@ -37,6 +37,24 @@ def insert_downtime_log(data):
         cur.execute(sql, list(data.values()))
         conn.commit()
 
+# === Update downtime summary in production_log ===
+def update_production_downtime(log_date, shift, machine_id, duration):
+    with get_connection() as conn:
+        cur = conn.cursor()
+        # Check if row exists
+        cur.execute("""
+            SELECT id FROM production_log
+            WHERE log_date = %s AND shift = %s AND machine_id = %s
+        """, (log_date, shift, machine_id))
+        result = cur.fetchone()
+        if result:
+            cur.execute("""
+                UPDATE production_log
+                SET downtime_min = COALESCE(downtime_min, 0) + %s
+                WHERE id = %s
+            """, (int(duration), result[0]))
+            conn.commit()
+
 # === UI ===
 st.header("🛠️ บันทึก Downtime เครื่องจักร")
 
@@ -77,6 +95,8 @@ with st.form("form_downtime"):
             }
 
             insert_downtime_log(data)
-            st.success("✅ บันทึก Downtime สำเร็จ")
+            update_production_downtime(log_date, shift, machine_id, duration)
+
+            st.success("✅ บันทึกสำเร็จแล้ว และรวม Downtime เข้ากับ production log แล้ว")
         except Exception as e:
             st.error(f"❌ บันทึกไม่สำเร็จ: {e}")
