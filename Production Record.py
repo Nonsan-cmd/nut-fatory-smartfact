@@ -1,98 +1,76 @@
 import streamlit as st
-import pandas as pd
 import psycopg2
-from datetime import datetime
+import pandas as pd
+from datetime import date, datetime
 
-# === Connection ===
+# === Database Connection ===
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Load dropdown options ===
+# === Load dropdowns ===
 @st.cache_data
-def load_part_options():
+def get_machines():
     with get_connection() as conn:
-        df = pd.read_sql("SELECT id, part_no FROM part_master WHERE is_active = TRUE", conn)
-    return df
+        return pd.read_sql("SELECT id, machine_code, machine_name FROM machine_list WHERE is_active = TRUE", conn)
 
 @st.cache_data
-def load_machine_options():
+def get_parts():
     with get_connection() as conn:
-        df = pd.read_sql("SELECT id, machine_name, department FROM machine_list WHERE is_active = TRUE", conn)
-    return df
+        return pd.read_sql("SELECT id, part_no FROM part_master WHERE is_active = TRUE", conn)
 
-# === Insert production record ===
-def insert_production_record(data):
+# === Insert to production_log ===
+def insert_production_log(data):
     with get_connection() as conn:
         cur = conn.cursor()
-        sql = """
-            INSERT INTO production_log 
-            (log_date, shift, machine_id, part_id, plan_qty, actual_qty, defect_qty, remark, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        cur.execute(sql, (
-            data["log_date"], data["shift"], data["machine_id"], data["part_id"],
-            data["plan_qty"], data["actual_qty"], data["defect_qty"],
-            data["remark"], data["created_by"]
-        ))
+        keys = ', '.join(data.keys())
+        values = ', '.join(['%s'] * len(data))
+        sql = f"INSERT INTO production_log ({keys}) VALUES ({values})"
+        cur.execute(sql, list(data.values()))
         conn.commit()
 
 # === UI ===
-st.set_page_config(page_title="Production Record", layout="centered")
-st.title("📝 บันทึกข้อมูลการผลิต")
+st.header("📋 บันทึกข้อมูลการผลิต")
 
-# Load options
-parts_df = load_part_options()
-machines_df = load_machine_options()
+machines_df = get_machines()
+parts_df = get_parts()
 
-# Form inputs
-today = datetime.today().date()
-log_date = st.date_input("วันที่", today)
+with st.form("form_production"):
+    col1, col2 = st.columns(2)
+    with col1:
+        log_date = st.date_input("วันที่", value=date.today())
+        shift = st.selectbox("กะ", ["Day", "Night"])
+        machine = st.selectbox("เครื่องจักร", machines_df["machine_code"] + " - " + machines_df["machine_name"])
+    with col2:
+        part = st.selectbox("Part No", parts_df["part_no"])
+        plan_qty = st.number_input("Plan จำนวน", min_value=0)
+        actual_qty = st.number_input("Actual จำนวน", min_value=0)
+        defect_qty = st.number_input("Defect จำนวน", min_value=0)
 
-selected_part = st.selectbox("Part No", parts_df["part_no"])
-part_id = parts_df.loc[parts_df["part_no"] == selected_part, "id"].values[0]
+    remark = st.text_area("หมายเหตุ")
+    created_by = st.text_input("ชื่อผู้กรอก")
 
-shift = st.selectbox("กะ", ["Day", "Night"])
+    submitted = st.form_submit_button("✅ บันทึกข้อมูล")
 
-col1, col2 = st.columns(2)
-with col1:
-    plan_qty = st.number_input("Plan จำนวน", min_value=0, step=1)
-with col2:
-    actual_qty = st.number_input("Actual จำนวน", min_value=0, step=1)
+    if submitted:
+        machine_id = machines_df.loc[machines_df["machine_code"] + " - " + machines_df["machine_name"] == machine, "id"].values[0]
+        part_id = parts_df.loc[parts_df["part_no"] == part, "id"].values[0]
 
-defect_qty = st.number_input("Defect จำนวน", min_value=0, step=1)
+        data = {
+            "log_date": log_date,
+            "shift": shift,
+            "machine_id": machine_id,
+            "part_id": part_id,
+            "plan_qty": plan_qty,
+            "actual_qty": actual_qty,
+            "defect_qty": defect_qty,
+            "remark": remark,
+            "created_by": created_by,
+            "created_at": datetime.now()
+        }
 
-# === เครื่องจักรและแผนก ===
-machine_options = machines_df["machine_name"].tolist()
-selected_machine_name = st.selectbox("เครื่องจักร", machine_options)
-machine_row = machines_df[machines_df["machine_name"] == selected_machine_name]
-machine_id = machine_row["id"].values[0]
-department = machine_row["department"].values[0]
+        try:
+            insert_production_log(data)
+            st.success("✅ บันทึกสำเร็จ")
+        except Exception as e:
+            st.error(f"❌ เกิดข้อผิดพลาด: {e}")
 
-# จัด layout แสดงเครื่องจักรและแผนกแนวนอน
-col4, col5 = st.columns(2)
-with col4:
-    st.text_input("เครื่องจักรที่เลือก", selected_machine_name, disabled=True)
-with col5:
-    st.text_input("แผนก", department, disabled=True)
-
-remark = st.text_area("หมายเหตุ")
-created_by = st.session_state.get("username", "admin")
-
-# Submit button
-if st.button("✅ บันทึกข้อมูล"):
-    record = {
-        "log_date": log_date,
-        "shift": shift,
-        "machine_id": machine_id,
-        "part_id": part_id,
-        "plan_qty": plan_qty,
-        "actual_qty": actual_qty,
-        "defect_qty": defect_qty,
-        "remark": remark,
-        "created_by": created_by
-    }
-    try:
-        insert_production_record(record)
-        st.success("✅ บันทึกข้อมูลสำเร็จแล้ว")
-    except Exception as e:
-        st.error(f"❌ บันทึกข้อมูลล้มเหลว: {e}")
