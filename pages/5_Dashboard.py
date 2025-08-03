@@ -4,6 +4,7 @@ import psycopg2
 import io
 from datetime import datetime, timedelta
 import plotly.express as px
+import plotly.graph_objects as go
 
 # === Database Connection ===
 def get_connection():
@@ -77,14 +78,27 @@ st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
 st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
 
-# === Charts ===
-st.subheader("📈 กราฟ Efficiency (%)")
-fig = px.bar(df, x="log_date", y="efficiency", color="machine_name", barmode="group", text_auto=".2s")
+# === Chart: Efficiency Pivot-style ===
+st.subheader("📊 กราฟเปรียบเทียบ Actual vs Plan แบบ Pivot")
+df_pivot = df.groupby(["log_date", "machine_name", "shift"], as_index=False).agg({
+    "plan_qty": "sum",
+    "actual_qty": "sum"
+})
+
+fig = go.Figure()
+for machine in df_pivot["machine_name"].unique():
+    df_m = df_pivot[df_pivot["machine_name"] == machine]
+    fig.add_trace(go.Bar(x=df_m["log_date"], y=df_m["actual_qty"], name=f"Actual - {machine}"))
+    fig.add_trace(go.Scatter(x=df_m["log_date"], y=df_m["plan_qty"], mode="lines+markers", name=f"Plan - {machine}"))
+
+fig.update_layout(barmode="group", xaxis_title="Date", yaxis_title="Qty", title="📅 Actual vs Plan By Machine")
 st.plotly_chart(fig, use_container_width=True)
 
+# === Chart: Downtime
 st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
 df_detail_grouped = df_detail.groupby(["log_date", "reason_name"], as_index=False)["duration_min"].sum()
 fig2 = px.bar(df_detail_grouped, x="log_date", y="duration_min", color="reason_name", barmode="stack")
+fig2.update_layout(title="📌 Downtime Summary by Reason")
 st.plotly_chart(fig2, use_container_width=True)
 
 # === Download Section ===
@@ -94,7 +108,6 @@ with st.expander("📥 Export to Excel"):
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name="Summary", index=False)
         df_detail.to_excel(writer, sheet_name="Downtime Detail", index=False)
-        writer.close()
     st.download_button(
         label="📤 Download Excel File",
         data=buffer,
