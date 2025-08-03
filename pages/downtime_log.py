@@ -51,7 +51,6 @@ def save_downtime():
 
     data = {
         "log_date": str(log_date),
-        "department": department,
         "shift": shift,
         "machine_id": int(machine_row["id"]),
         "downtime_reason_id": int(reason_row["id"]),
@@ -63,8 +62,8 @@ def save_downtime():
         with get_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
-                INSERT INTO downtime_log (log_date, department, shift, machine_id, downtime_reason_id, duration_min, operator_name)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO downtime_log (log_date, shift, machine_id, downtime_reason_id, duration_min, operator_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """, tuple(data.values()))
             conn.commit()
             st.success("✅ บันทึก Downtime สำเร็จแล้ว")
