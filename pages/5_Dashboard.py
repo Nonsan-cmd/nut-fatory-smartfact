@@ -8,7 +8,6 @@ from datetime import date
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Load Efficiency Report ===
 def load_efficiency_report(start_date, end_date):
     with get_connection() as conn:
         sql = """
