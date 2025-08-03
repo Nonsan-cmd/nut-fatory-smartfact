@@ -79,7 +79,7 @@ df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
 st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
 
 # === Chart: Efficiency Pivot-style ===
-st.subheader("📊 กราฟเปรียบเทียบ Actual vs Plan แบบ Pivot")
+st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) แบบ Pivot")
 df_pivot = df.groupby(["log_date", "machine_name", "shift"], as_index=False).agg({
     "plan_qty": "sum",
     "actual_qty": "sum"
@@ -91,7 +91,7 @@ for machine in df_pivot["machine_name"].unique():
     fig.add_trace(go.Bar(x=df_m["log_date"], y=df_m["actual_qty"], name=f"Actual - {machine}"))
     fig.add_trace(go.Scatter(x=df_m["log_date"], y=df_m["plan_qty"], mode="lines+markers", name=f"Plan - {machine}"))
 
-fig.update_layout(barmode="group", xaxis_title="Date", yaxis_title="Qty", title="📅 Actual vs Plan By Machine")
+fig.update_layout(barmode="group", xaxis_title="Date", yaxis_title="Qty", title="📅 Actual (Bar) vs Plan (Line) By Machine")
 st.plotly_chart(fig, use_container_width=True)
 
 # === Chart: Downtime
@@ -110,7 +110,7 @@ with st.expander("📥 Export to Excel"):
         df_detail.to_excel(writer, sheet_name="Downtime Detail", index=False)
     st.download_button(
         label="📤 Download Excel File",
-        data=buffer,
+        data=buffer.getvalue(),
         file_name=f"dashboard_efficiency_{datetime.now().date()}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
