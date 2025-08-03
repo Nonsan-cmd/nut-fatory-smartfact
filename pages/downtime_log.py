@@ -42,7 +42,7 @@ with st.container():
     with col2:
         reason_name = st.selectbox("📌 สาเหตุ Downtime", reason_df["reason_name"])
         duration_min = st.number_input("⏱️ ระยะเวลา (นาที)", min_value=0, step=1, value=0)
-        operator_name = st.text_input("✍️ ชื่อผู้กรอก")
+        created_by = st.text_input("✍️ ชื่อผู้กรอก")
 
 # === Save Function ===
 def save_downtime():
@@ -55,15 +55,16 @@ def save_downtime():
         "machine_id": int(machine_row["id"]),
         "downtime_reason_id": int(reason_row["id"]),
         "duration_min": int(duration_min),
-        "operator_name": operator_name
+        "created_by": created_by,
+        "created_at": datetime.now()
     }
 
     try:
         with get_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
-                INSERT INTO downtime_log (log_date, shift, machine_id, downtime_reason_id, duration_min, operator_name)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO downtime_log (log_date, shift, machine_id, downtime_reason_id, duration_min, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, tuple(data.values()))
             conn.commit()
             st.success("✅ บันทึก Downtime สำเร็จแล้ว")
@@ -75,7 +76,7 @@ st.markdown("""<br>""", unsafe_allow_html=True)
 submit_col, _ = st.columns([1, 3])
 with submit_col:
     if st.button("✅ บันทึก Downtime", use_container_width=True):
-        if not operator_name:
+        if not created_by:
             st.warning("⚠️ กรุณาระบุชื่อผู้กรอกก่อนบันทึก")
         elif duration_min <= 0:
             st.warning("⚠️ ระยะเวลาต้องมากกว่า 0 นาที")
