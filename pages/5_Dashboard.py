@@ -8,30 +8,13 @@ import plotly.express as px
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Update downtime_min into production_log ===
-def update_downtime_summary():
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE production_log pl
-                SET downtime_min = sub.total_downtime_min
-                FROM (
-                    SELECT log_date, shift, machine_id, SUM(duration_min) AS total_downtime_min
-                    FROM downtime_log
-                    GROUP BY log_date, shift, machine_id
-                ) sub
-                WHERE pl.log_date = sub.log_date
-                  AND pl.shift = sub.shift
-                  AND pl.machine_id = sub.machine_id;
-            """)
-            conn.commit()
-
-# === Query Efficiency Report ===
-def load_efficiency_report(start_date, end_date):
+# === Load Efficiency Report ===
+def load_efficiency_report(start_date, end_date, department_filter=None):
     with get_connection() as conn:
         sql = """
             SELECT 
                 ml.department,
+                ml.machine_name,
                 pm.part_no,
                 SUM(pl.plan_qty) AS plan_qty,
                 SUM(pl.actual_qty) AS actual_qty,
@@ -46,86 +29,61 @@ def load_efficiency_report(start_date, end_date):
                     END
                 , 1) AS efficiency
             FROM production_log pl
-            INNER JOIN machine_list ml ON pl.machine_id = ml.id
-            INNER JOIN part_master pm ON pl.part_id = pm.id
+            JOIN machine_list ml ON pl.machine_id = ml.id
+            JOIN part_master pm ON pl.part_id = pm.id
             WHERE pl.log_date BETWEEN %s AND %s
-            GROUP BY ml.department, pm.part_no, pm.std_cycle_time_sec
-            ORDER BY ml.department, pm.part_no
+            """
+        params = [start_date, end_date]
+        if department_filter and department_filter != "All":
+            sql += " AND ml.department = %s"
+            params.append(department_filter)
+        sql += """
+            GROUP BY ml.department, ml.machine_name, pm.part_no, pm.std_cycle_time_sec
+            ORDER BY ml.department, ml.machine_name, pm.part_no
         """
-        return pd.read_sql(sql, conn, params=(start_date, end_date))
+        return pd.read_sql(sql, conn, params=params)
 
-# === UI ===
+# === Streamlit UI ===
 st.set_page_config(page_title="Dashboard Efficiency Report", layout="wide")
-st.title("📊 Dashboard Efficiency Report")
+st.title("\U0001F4CA Dashboard Efficiency Report")
 
-# ⏱️ Date Filters
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("📅 Start Date", value=date.today())
+    start_date = st.date_input("\U0001F4C5 Start Date", value=date.today())
 with col2:
-    end_date = st.date_input("📅 End Date", value=date.today())
+    end_date = st.date_input("\U0001F4C5 End Date", value=date.today())
 
-# ⛏️ Refresh downtime summary
-tabs = st.tabs(["🔄 Efficiency Dashboard", "📉 Downtime by Reason"])
+# Department filter
+with st.sidebar:
+    st.header("\U0001F3E2 ตัวกรองรายแผนก")
+    department_filter = st.selectbox("เลือกแผนก:", options=["All", "Forming", "Tapping", "Final", "Warehouse", "Other"])
 
-with tabs[0]:
-    if start_date > end_date:
-        st.warning("📛 Start Date ต้องน้อยกว่าหรือเท่ากับ End Date")
+if start_date > end_date:
+    st.warning("\U0001F6DB Start Date ต้องน้อยกว่าหรือเท่ากับ End Date")
+else:
+    df = load_efficiency_report(start_date, end_date, department_filter)
+    if df.empty:
+        st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
     else:
-        update_downtime_summary()
-        df = load_efficiency_report(start_date, end_date)
+        st.success(f"\u2705 พบทั้งหมด {len(df)} รายการ")
+        st.dataframe(df, use_container_width=True)
 
-        if df.empty:
-            st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
-        else:
-            dept_list = df["department"].unique().tolist()
-            selected_dept = st.multiselect("เลือกแผนก", dept_list, default=dept_list)
-            df_filtered = df[df["department"].isin(selected_dept)]
+        # Chart
+        fig = px.bar(
+            df,
+            x="machine_name",
+            y="efficiency",
+            color="department",
+            title="Efficiency by Machine",
+            hover_data=["part_no", "plan_qty", "actual_qty", "downtime_min"],
+            labels={"efficiency": "Efficiency (%)"}
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-            st.dataframe(df_filtered, use_container_width=True)
-
-            fig = px.bar(df_filtered, 
-                         x="part_no", y="efficiency", 
-                         color="department", barmode="group",
-                         title="Efficiency by Part",
-                         labels={"efficiency": "Efficiency (%)", "part_no": "Part No"})
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.download_button(
-                label="📥 ดาวน์โหลด Excel",
-                data=df_filtered.to_csv(index=False).encode("utf-8-sig"),
-                file_name="efficiency_report.csv",
-                mime="text/csv"
-            )
-
-with tabs[1]:
-    with get_connection() as conn:
-        sql = """
-            SELECT 
-                dl.log_date,
-                dl.shift,
-                ml.department,
-                ml.machine_name,
-                drm.reason_name,
-                SUM(dl.duration_min) AS duration_min
-            FROM downtime_log dl
-            JOIN machine_list ml ON dl.machine_id = ml.id
-            JOIN downtime_reason_master drm ON dl.downtime_reason_id = drm.id
-            WHERE dl.log_date BETWEEN %s AND %s
-            GROUP BY dl.log_date, dl.shift, ml.department, ml.machine_name, drm.reason_name
-            ORDER BY dl.log_date DESC, ml.department
-        """
-        df_downtime = pd.read_sql(sql, conn, params=(start_date, end_date))
-
-    if not df_downtime.empty:
-        st.dataframe(df_downtime, use_container_width=True)
-
-        fig2 = px.bar(df_downtime, 
-                     x="machine_name", y="duration_min", 
-                     color="reason_name", 
-                     title="Downtime by Reason",
-                     labels={"duration_min": "Downtime (min)"},
-                     hover_data=["department", "log_date", "shift"])
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("ยังไม่มีข้อมูล downtime")
+        # Export
+        st.download_button(
+            label="\U0001F4BE ดาวน์โหลด Excel",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="efficiency_report.csv",
+            mime="text/csv"
+        )
