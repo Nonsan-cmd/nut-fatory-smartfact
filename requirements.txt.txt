@@ -20,4 +20,3 @@ pyyaml
 pymongo
 requests-oauthlib
 pycryptodome
-
