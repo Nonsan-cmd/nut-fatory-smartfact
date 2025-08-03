@@ -14,23 +14,25 @@ def load_efficiency_report(start_date, end_date):
             SELECT 
                 ml.department,
                 pm.part_no,
-                SUM(pl.plan_qty) AS plan_qty,
-                SUM(pl.actual_qty) AS actual_qty,
-                SUM(pl.defect_qty) AS defect_qty,
+                SUM(COALESCE(pl.plan_qty, 0)) AS plan_qty,
+                SUM(COALESCE(pl.actual_qty, 0)) AS actual_qty,
+                SUM(COALESCE(pl.defect_qty, 0)) AS defect_qty,
                 SUM(COALESCE(pl.downtime_min, 0)) AS downtime_min,
                 ROUND(
                     CASE 
-                        WHEN SUM(pl.actual_qty * pm.std_cycle_time_sec) + SUM(COALESCE(pl.downtime_min, 0) * 60) = 0 THEN 0
+                        WHEN SUM(COALESCE(pl.actual_qty, 0) * COALESCE(pm.std_cycle_time_sec, 0)) 
+                             + SUM(COALESCE(pl.downtime_min, 0) * 60) = 0 
+                        THEN 0
                         ELSE 
-                            (SUM(pl.actual_qty * pm.std_cycle_time_sec)::NUMERIC 
-                            / (SUM(pl.actual_qty * pm.std_cycle_time_sec) + SUM(COALESCE(pl.downtime_min, 0) * 60)) * 100)
+                            (SUM(COALESCE(pl.actual_qty, 0) * COALESCE(pm.std_cycle_time_sec, 0))::NUMERIC 
+                            / (SUM(COALESCE(pl.actual_qty, 0) * COALESCE(pm.std_cycle_time_sec, 0)) + SUM(COALESCE(pl.downtime_min, 0) * 60)) * 100)
                     END
                 , 1) AS "Efficiency (%)"
             FROM production_log pl
             INNER JOIN machine_list ml ON pl.machine_id = ml.id
             INNER JOIN part_master pm ON pl.part_id = pm.id
             WHERE pl.log_date BETWEEN %s AND %s
-            GROUP BY ml.department, pm.part_no, pm.std_cycle_time_sec
+            GROUP BY ml.department, pm.part_no
             ORDER BY ml.department, pm.part_no
         """
         return pd.read_sql(sql, conn, params=(start_date, end_date))
