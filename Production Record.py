@@ -40,17 +40,20 @@ with st.form("form_production"):
         log_date = st.date_input("📅 วันที่", value=date.today())
         shift = st.selectbox("🕐 กะ", ["Day", "Night"])
 
-        machine_display_list = machines_df["machine_code"] + " - " + machines_df["machine_name"]
+        # ✅ เลือกแผนกก่อน
+        dept_list = machines_df["department"].dropna().unique().tolist()
+        selected_dept = st.selectbox("🏭 แผนก", dept_list)
+
+        filtered_machines = machines_df[machines_df["department"] == selected_dept]
+        machine_display_list = filtered_machines["machine_code"] + " - " + filtered_machines["machine_name"]
         selected_machine = st.selectbox("⚙️ เครื่องจักร", machine_display_list)
 
-        # Extract machine_id + department
-        machine_row = machines_df[machine_display_list == selected_machine]
+        # Get machine_id
+        machine_row = filtered_machines[machine_display_list == selected_machine]
         if not machine_row.empty:
             machine_id = int(machine_row["id"].values[0])
-            department = machine_row["department"].values[0]
-            st.text_input("🏭 แผนก", value=department, disabled=True)
         else:
-            st.warning("ไม่พบข้อมูลเครื่องจักร")
+            st.stop()
 
     with col2:
         selected_part = st.selectbox("🔩 Part No", parts_df["part_no"])
