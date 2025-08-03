@@ -43,14 +43,16 @@ def load_data(start_date, end_date):
                 WHERE pl.log_date BETWEEN %s AND %s
                 ORDER BY pl.log_date DESC, ml.machine_name
             """
-            df = pd.read_sql(query, conn, params=(start_date, end_date))
+            df = pd.read_sql(query, conn, params=(str(start_date), str(end_date)))
 
-            df["Efficiency (%)"] = df.apply(lambda row: 
-                round(
-                    (row["actual_qty"] * row["std_cycle_time_sec"]) / 
-                    ((row["actual_qty"] * row["std_cycle_time_sec"]) + (row["downtime_min"] * 60)) * 100
-                    if (row["actual_qty"] * row["std_cycle_time_sec"] + row["downtime_min"] * 60) > 0 else 0, 1
-            , axis=1)
+            # คำนวณ Efficiency อย่างปลอดภัย
+            def calc_eff(row):
+                actual_sec = row["actual_qty"] * row["std_cycle_time_sec"]
+                downtime_sec = row["downtime_min"] * 60
+                total_sec = actual_sec + downtime_sec
+                return round((actual_sec / total_sec) * 100, 1) if total_sec > 0 else 0
+
+            df["Efficiency (%)"] = df.apply(calc_eff, axis=1)
             return df
     except Exception as e:
         st.error(f"❌ เกิดข้อผิดพลาด: {e}")
