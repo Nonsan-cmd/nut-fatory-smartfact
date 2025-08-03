@@ -79,7 +79,6 @@ st.dataframe(filtered_data, use_container_width=True)
 buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
     filtered_data.to_excel(writer, index=False, sheet_name="Efficiency")
-    writer.save()
 
 st.download_button(
     label="📥 ดาวน์โหลด Excel",
