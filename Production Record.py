@@ -29,6 +29,7 @@ def insert_production_log(data):
         conn.commit()
 
 # === UI ===
+st.set_page_config(page_title="Production Record", layout="centered")
 st.header("📋 บันทึกข้อมูลการผลิต")
 
 machines_df = get_machines()
@@ -85,6 +86,7 @@ with st.form("form_production"):
                 "defect_qty": int(defect_qty),
                 "remark": remark,
                 "created_by": created_by,
+                "department": selected_dept,
                 "created_at": datetime.now()
             }
 
