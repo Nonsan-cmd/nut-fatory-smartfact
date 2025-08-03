@@ -11,7 +11,7 @@ def get_connection():
 @st.cache_data
 def get_machines():
     with get_connection() as conn:
-        return pd.read_sql("SELECT id, machine_code, machine_name FROM machine_list WHERE is_active = TRUE", conn)
+        return pd.read_sql("SELECT id, machine_code, machine_name, department FROM machine_list WHERE is_active = TRUE", conn)
 
 @st.cache_data
 def get_parts():
@@ -37,40 +37,55 @@ parts_df = get_parts()
 with st.form("form_production"):
     col1, col2 = st.columns(2)
     with col1:
-        log_date = st.date_input("วันที่", value=date.today())
-        shift = st.selectbox("กะ", ["Day", "Night"])
-        machine = st.selectbox("เครื่องจักร", machines_df["machine_code"] + " - " + machines_df["machine_name"])
-    with col2:
-        part = st.selectbox("Part No", parts_df["part_no"])
-        plan_qty = st.number_input("Plan จำนวน", min_value=0)
-        actual_qty = st.number_input("Actual จำนวน", min_value=0)
-        defect_qty = st.number_input("Defect จำนวน", min_value=0)
+        log_date = st.date_input("📅 วันที่", value=date.today())
+        shift = st.selectbox("🕐 กะ", ["Day", "Night"])
 
-    remark = st.text_area("หมายเหตุ")
-    created_by = st.text_input("ชื่อผู้กรอก")
+        machine_display_list = machines_df["machine_code"] + " - " + machines_df["machine_name"]
+        selected_machine = st.selectbox("⚙️ เครื่องจักร", machine_display_list)
+
+        # Extract machine_id + department
+        machine_row = machines_df[machine_display_list == selected_machine]
+        if not machine_row.empty:
+            machine_id = int(machine_row["id"].values[0])
+            department = machine_row["department"].values[0]
+            st.text_input("🏭 แผนก", value=department, disabled=True)
+        else:
+            st.warning("ไม่พบข้อมูลเครื่องจักร")
+
+    with col2:
+        selected_part = st.selectbox("🔩 Part No", parts_df["part_no"])
+        plan_qty = st.number_input("🎯 Plan จำนวน", min_value=0, step=1)
+        actual_qty = st.number_input("✅ Actual จำนวน", min_value=0, step=1)
+        defect_qty = st.number_input("❌ Defect จำนวน", min_value=0, step=1)
+
+    remark = st.text_area("📝 หมายเหตุ")
+    created_by = st.text_input("👷‍♂️ ชื่อผู้กรอก")
 
     submitted = st.form_submit_button("✅ บันทึกข้อมูล")
 
     if submitted:
-        machine_id = machines_df.loc[machines_df["machine_code"] + " - " + machines_df["machine_name"] == machine, "id"].values[0]
-        part_id = parts_df.loc[parts_df["part_no"] == part, "id"].values[0]
-
-        data = {
-            "log_date": log_date,
-            "shift": shift,
-            "machine_id": machine_id,
-            "part_id": part_id,
-            "plan_qty": plan_qty,
-            "actual_qty": actual_qty,
-            "defect_qty": defect_qty,
-            "remark": remark,
-            "created_by": created_by,
-            "created_at": datetime.now()
-        }
-
         try:
+            part_row = parts_df[parts_df["part_no"] == selected_part]
+            if part_row.empty:
+                st.error("❌ ไม่พบ Part No ที่เลือก")
+                st.stop()
+
+            part_id = int(part_row["id"].values[0])
+
+            data = {
+                "log_date": log_date,
+                "shift": shift,
+                "machine_id": machine_id,
+                "part_id": part_id,
+                "plan_qty": int(plan_qty),
+                "actual_qty": int(actual_qty),
+                "defect_qty": int(defect_qty),
+                "remark": remark,
+                "created_by": created_by,
+                "created_at": datetime.now()
+            }
+
             insert_production_log(data)
-            st.success("✅ บันทึกสำเร็จ")
+            st.success("✅ บันทึกสำเร็จเรียบร้อย")
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาด: {e}")
-
