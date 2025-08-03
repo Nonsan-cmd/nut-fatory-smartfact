@@ -1,6 +1,6 @@
-streamlit==1.29.0
-pandas==2.1.4
-psycopg2-binary==2.9.9
+streamlit
+pandas
+psycopg2-binary
 openpyxl
 xlsxwriter
 gspread
@@ -15,3 +15,4 @@ plotly
 SQLAlchemy
 python-dotenv
 streamlit-aggrid==0.3.3
+
