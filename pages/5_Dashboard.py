@@ -48,18 +48,15 @@ with col2:
 if start_date > end_date:
     st.warning("📛 Start Date ต้องน้อยกว่าหรือเท่ากับ End Date")
 else:
-    try:
-        df = load_efficiency_report(start_date, end_date)
-        if df.empty:
-            st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
-        else:
-            st.success(f"✅ พบทั้งหมด {len(df)} รายการ")
-            st.dataframe(df, use_container_width=True)
-            st.download_button(
-                label="📥 ดาวน์โหลด Excel",
-                data=df.to_csv(index=False).encode("utf-8-sig"),
-                file_name="efficiency_report.csv",
-                mime="text/csv"
-            )
-    except Exception as e:
-        st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+    df = load_efficiency_report(start_date, end_date)
+    if df.empty:
+        st.warning("ไม่พบข้อมูลในช่วงวันที่ที่เลือก")
+    else:
+        st.success(f"✅ พบทั้งหมด {len(df)} รายการ")
+        st.dataframe(df, use_container_width=True)
+        st.download_button(
+            label="📥 ดาวน์โหลด Excel",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="efficiency_report.csv",
+            mime="text/csv"
+        )
