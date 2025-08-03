@@ -11,7 +11,7 @@ def get_connection():
 @st.cache_data
 def get_machines():
     with get_connection() as conn:
-        return pd.read_sql("SELECT id, machine_code, machine_name, department FROM machine_list WHERE is_active = TRUE", conn)
+        return pd.read_sql("SELECT id, machine_code, machine_name FROM machine_list WHERE is_active = TRUE", conn)
 
 @st.cache_data
 def get_parts():
@@ -40,17 +40,10 @@ with st.form("form_production"):
     with col1:
         log_date = st.date_input("📅 วันที่", value=date.today())
         shift = st.selectbox("🕐 กะ", ["Day", "Night"])
-
-        # ✅ เลือกแผนกก่อน
-        dept_list = machines_df["department"].dropna().unique().tolist()
-        selected_dept = st.selectbox("🏭 แผนก", dept_list)
-
-        filtered_machines = machines_df[machines_df["department"] == selected_dept]
-        machine_display_list = filtered_machines["machine_code"] + " - " + filtered_machines["machine_name"]
+        machine_display_list = machines_df["machine_code"] + " - " + machines_df["machine_name"]
         selected_machine = st.selectbox("⚙️ เครื่องจักร", machine_display_list)
 
-        # Get machine_id
-        machine_row = filtered_machines[machine_display_list == selected_machine]
+        machine_row = machines_df[machine_display_list == selected_machine]
         if not machine_row.empty:
             machine_id = int(machine_row["id"].values[0].item())
         else:
@@ -86,7 +79,6 @@ with st.form("form_production"):
                 "defect_qty": int(defect_qty),
                 "remark": remark,
                 "created_by": created_by,
-                "department": selected_dept,
                 "created_at": datetime.now()
             }
 
