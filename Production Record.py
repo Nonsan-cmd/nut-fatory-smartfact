@@ -11,7 +11,7 @@ def get_connection():
 @st.cache_data
 def get_machines():
     with get_connection() as conn:
-        return pd.read_sql("SELECT id, machine_code, machine_name FROM machine_list WHERE is_active = TRUE", conn)
+        return pd.read_sql("SELECT id, machine_code, machine_name, department FROM machine_list WHERE is_active = TRUE", conn)
 
 @st.cache_data
 def get_parts():
@@ -46,6 +46,7 @@ with st.form("form_production"):
         machine_row = machines_df[machine_display_list == selected_machine]
         if not machine_row.empty:
             machine_id = int(machine_row["id"].values[0].item())
+            department = machine_row["department"].values[0]
         else:
             st.stop()
 
@@ -79,6 +80,7 @@ with st.form("form_production"):
                 "defect_qty": int(defect_qty),
                 "remark": remark,
                 "created_by": created_by,
+                "department": department,
                 "created_at": datetime.now()
             }
 
