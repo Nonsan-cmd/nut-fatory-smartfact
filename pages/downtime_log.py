@@ -4,8 +4,11 @@ from datetime import datetime
 import pandas as pd
 
 # === Setup ===
-st.set_page_config(page_title="บันทึก Downtime", layout="centered")
-st.title("🛠️ บันทึก Downtime")
+st.set_page_config(page_title="บันทึก Downtime", layout="wide")
+st.markdown("""
+    <h1 style='text-align: center; font-size: 2.8em;'>🛠️ บันทึก Downtime</h1>
+    <hr style='border: 1px solid #ccc;' />
+""", unsafe_allow_html=True)
 
 # === Database Connection ===
 def get_connection():
@@ -26,13 +29,20 @@ def load_reasons():
 machine_df = load_machines()
 reason_df = load_reasons()
 
-department = st.selectbox("แผนก", sorted(machine_df["department"].unique()))
-log_date = st.date_input("วันที่", datetime.today())
-reason_name = st.selectbox("สาเหตุ Downtime", reason_df["reason_name"])
-shift = st.selectbox("กะ", ["Day", "Night"])
-duration_min = st.number_input("ระยะเวลา (นาที)", min_value=0, step=1, value=0)
-machine_label = st.selectbox("เครื่องจักร", machine_df[machine_df["department"] == department]["machine_name"])
-operator_name = st.text_input("ชื่อผู้กรอก")
+with st.container():
+    st.write("### กรอกข้อมูลเพื่อบันทึก Downtime")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        department = st.selectbox("แผนก", sorted(machine_df["department"].unique()))
+        log_date = st.date_input("📅 วันที่", datetime.today())
+        shift = st.selectbox("🕘 กะ", ["Day", "Night"])
+        machine_label = st.selectbox("⚙️ เครื่องจักร", machine_df[machine_df["department"] == department]["machine_name"])
+
+    with col2:
+        reason_name = st.selectbox("📌 สาเหตุ Downtime", reason_df["reason_name"])
+        duration_min = st.number_input("⏱️ ระยะเวลา (นาที)", min_value=0, step=1, value=0)
+        operator_name = st.text_input("✍️ ชื่อผู้กรอก")
 
 # === Save Function ===
 def save_downtime():
@@ -62,10 +72,13 @@ def save_downtime():
         st.error(f"❌ เกิดข้อผิดพลาด: {e}")
 
 # === Submit Button ===
-if st.button("✅ บันทึก Downtime", use_container_width=True):
-    if not operator_name:
-        st.warning("⚠️ กรุณาระบุชื่อผู้กรอกก่อนบันทึก")
-    elif duration_min <= 0:
-        st.warning("⚠️ ระยะเวลาต้องมากกว่า 0 นาที")
-    else:
-        save_downtime()
+st.markdown("""<br>""", unsafe_allow_html=True)
+submit_col, _ = st.columns([1, 3])
+with submit_col:
+    if st.button("✅ บันทึก Downtime", use_container_width=True):
+        if not operator_name:
+            st.warning("⚠️ กรุณาระบุชื่อผู้กรอกก่อนบันทึก")
+        elif duration_min <= 0:
+            st.warning("⚠️ ระยะเวลาต้องมากกว่า 0 นาที")
+        else:
+            save_downtime()
