@@ -8,7 +8,7 @@ import plotly.express as px
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Load Data with Efficiency Calculation ===
+# === Load Data with Downtime ===
 @st.cache_data
 def load_data(start_date, end_date):
     try:
@@ -44,6 +44,7 @@ def load_data(start_date, end_date):
                 ORDER BY pl.log_date DESC, ml.machine_name
             """
             df = pd.read_sql(query, conn, params=(start_date, end_date))
+
             df["Efficiency (%)"] = df.apply(lambda row: 
                 round(
                     (row["actual_qty"] * row["std_cycle_time_sec"]) / 
