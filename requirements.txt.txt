@@ -1,7 +1,7 @@
 streamlit
 gspread
 oauth2client
-psycopg2-binary
+psycopg2-binary==2.9.9
 openpyxl
 pandas
 Pillow
@@ -20,3 +20,4 @@ pyyaml
 pymongo
 requests-oauthlib
 pycryptodome
+
