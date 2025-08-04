@@ -21,11 +21,11 @@ if uploaded_file:
 
         with get_connection() as conn:
             machine_df = pd.read_sql("SELECT id, machine_name FROM machine_list", conn)
+            part_df = pd.read_sql("SELECT id, part_no FROM part_master", conn)
 
         for sheet in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=0)
 
-            # หาคอลัมน์ที่เริ่มต้นจาก log_date (P) เป็นต้นไป
             col_start = df.columns.get_loc("log_date") if "log_date" in df.columns else None
             if col_start is None:
                 st.warning(f"❌ ไม่พบคอลัมน์ 'log_date' ในชีท {sheet}")
@@ -40,8 +40,21 @@ if uploaded_file:
             # Map machine_id
             df_trimmed = df_trimmed.merge(machine_df, how="left", on="machine_name")
             df_trimmed = df_trimmed.rename(columns={"id": "machine_id"})
-            df_trimmed = df_trimmed.drop(columns=["machine_name"])
-            df_trimmed = df_trimmed[df_trimmed["machine_id"].notna()]
+
+            # Map part_id
+            df_trimmed = df_trimmed.merge(part_df, how="left", on="part_no")
+            df_trimmed = df_trimmed.rename(columns={"id": "part_id"})
+
+            # ตรวจสอบ missing
+            missing_machine = df_trimmed[df_trimmed["machine_id"].isna()]
+            missing_part = df_trimmed[df_trimmed["part_id"].isna()]
+
+            if not missing_machine.empty:
+                st.warning(f"⚠️ พบเครื่องจักรที่ไม่ตรงกับฐานข้อมูล: {missing_machine['machine_name'].unique().tolist()}")
+            if not missing_part.empty:
+                st.warning(f"⚠️ พบ Part No. ที่ไม่ตรงกับฐานข้อมูล: {missing_part['part_no'].unique().tolist()}")
+
+            df_trimmed = df_trimmed.dropna(subset=["machine_id", "part_id"])
 
             all_data.append(df_trimmed)
 
@@ -56,13 +69,13 @@ if uploaded_file:
                         for _, row in df_upload.iterrows():
                             cur.execute("""
                                 INSERT INTO production_log (log_date, shift, department, machine_id, part_id, plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
-                                VALUES (%s, %s, %s, %s, (SELECT id FROM part_master WHERE part_no = %s), %s, %s, %s, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """, (
                                 row.get("log_date"),
                                 row.get("shift"),
                                 row.get("department"),
                                 int(row.get("machine_id")),
-                                row.get("part_no"),
+                                int(row.get("part_id")),
                                 row.get("plan_qty", 0),
                                 row.get("actual_qty", 0),
                                 row.get("defect_qty", 0),
