@@ -55,8 +55,8 @@ if uploaded_file:
                         cur = conn.cursor()
                         for _, row in df_upload.iterrows():
                             cur.execute("""
-                                INSERT INTO production_log (log_date, shift, department, machine_id, part_no, plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                INSERT INTO production_log (log_date, shift, department, machine_id, part_id, plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
+                                VALUES (%s, %s, %s, %s, (SELECT id FROM part_master WHERE part_no = %s), %s, %s, %s, %s, %s, %s)
                             """, (
                                 row.get("log_date"),
                                 row.get("shift"),
