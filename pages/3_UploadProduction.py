@@ -30,6 +30,7 @@ if uploaded_file:
 
             df_trimmed = df.iloc[:, col_start:]
             df_trimmed = df_trimmed.dropna(subset=["log_date", "machine_name"], how="any")
+            df_trimmed = df_trimmed[df_trimmed["part_no"].notna() & (df_trimmed["part_no"].astype(str).str.strip() != "")]
             df_trimmed["log_date"] = pd.to_datetime(df_trimmed["log_date"]).dt.date
             df_trimmed["created_at"] = datetime.now()
 
