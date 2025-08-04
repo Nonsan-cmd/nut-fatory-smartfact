@@ -116,7 +116,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # === Donut Graph: Efficiency vs Downtime vs NG ===
-st.subheader("🍩 สัดส่วน Efficiency, Downtime และ NG")
+st.subheader("📊 สัดส่วน Efficiency, Downtime และ NG")
 total_plan = df["plan_qty"].sum()
 total_actual = df["actual_qty"].sum()
 total_defect = df["defect_qty"].sum()
