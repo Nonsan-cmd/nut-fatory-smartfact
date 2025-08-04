@@ -3,8 +3,8 @@ import pandas as pd
 import psycopg2
 import io
 from datetime import datetime, timedelta
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 
 # === Database Connection ===
 def get_connection():
@@ -78,23 +78,44 @@ st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
 st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
 
-# === Chart: Efficiency Pivot-style ===
-st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) แบบ Pivot")
-df_pivot = df.groupby(["log_date", "machine_name", "shift"], as_index=False).agg({
+# === Chart: Efficiency By Machine ===
+st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
+df_grouped = df.groupby(["machine_name", "shift"], as_index=False).agg({
     "plan_qty": "sum",
     "actual_qty": "sum"
 })
 
-fig = go.Figure()
-for machine in df_pivot["machine_name"].unique():
-    df_m = df_pivot[df_pivot["machine_name"] == machine]
-    fig.add_trace(go.Bar(x=df_m["log_date"], y=df_m["actual_qty"], name=f"Actual - {machine}"))
-    fig.add_trace(go.Scatter(x=df_m["log_date"], y=df_m["plan_qty"], mode="lines+markers", name=f"Plan - {machine}"))
+pivot_df = df_grouped.pivot(index="machine_name", columns="shift", values=["plan_qty", "actual_qty"]).fillna(0)
+pivot_df.columns = ['plan_day', 'plan_night', 'actual_day', 'actual_night']
+pivot_df["plan_total"] = pivot_df["plan_day"] + pivot_df["plan_night"]
+pivot_df["actual_total"] = pivot_df["actual_day"] + pivot_df["actual_night"]
+pivot_df = pivot_df.reset_index()
 
-fig.update_layout(barmode="group", xaxis_title="Date", yaxis_title="Qty", title="📅 Actual (Bar) vs Plan (Line) By Machine")
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=pivot_df["machine_name"],
+    y=pivot_df["actual_total"],
+    name="Actual",
+    marker_color="blue"
+))
+fig.add_trace(go.Scatter(
+    x=pivot_df["machine_name"],
+    y=pivot_df["plan_total"],
+    name="Plan",
+    mode="lines+markers",
+    line=dict(color="orange", width=4),
+    marker=dict(size=10)
+))
+fig.update_layout(
+    barmode="group",
+    xaxis_title="Machine",
+    yaxis_title="Qty",
+    title="Actual (Bar) vs Plan (Line) By Machine",
+    legend=dict(orientation="h")
+)
 st.plotly_chart(fig, use_container_width=True)
 
-# === Chart: Downtime
+# === Chart: Downtime ===
 st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
 df_detail_grouped = df_detail.groupby(["log_date", "reason_name"], as_index=False)["duration_min"].sum()
 fig2 = px.bar(df_detail_grouped, x="log_date", y="duration_min", color="reason_name", barmode="stack")
