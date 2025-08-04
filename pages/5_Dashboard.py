@@ -115,6 +115,26 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
+# === Donut Graph: Efficiency vs Downtime vs NG ===
+st.subheader("🍩 สัดส่วน Efficiency, Downtime และ NG")
+total_plan = df["plan_qty"].sum()
+total_actual = df["actual_qty"].sum()
+total_defect = df["defect_qty"].sum()
+total_downtime = df["total_downtime_min"].sum()
+
+total_good = total_actual - total_defect
+
+eff_percent = (total_good / total_plan * 100) if total_plan else 0
+downtime_percent = (total_downtime / (total_downtime + 1)) if total_plan else 0  # scaled for comparison
+ng_percent = (total_defect / total_actual * 100) if total_actual else 0
+
+labels = ['Efficiency (%)', 'Downtime (%)', 'NG (%)']
+values = [eff_percent, downtime_percent, ng_percent]
+
+fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5)])
+fig_donut.update_layout(title="Donut Chart - Efficiency vs Downtime vs NG")
+st.plotly_chart(fig_donut, use_container_width=True)
+
 # === Chart: Downtime ===
 st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
 df_detail_grouped = df_detail.groupby(["log_date", "reason_name"], as_index=False)["duration_min"].sum()
