@@ -1,76 +1,69 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
+import io
 from datetime import datetime
 
-# === DB Connection ===
+# === Database Connection ===
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === โหลดข้อมูลจาก Supabase ===
-@st.cache_data
-def get_machines_df():
-    with get_connection() as conn:
-        return pd.read_sql("SELECT id AS machine_id, machine_name FROM machine_list WHERE is_active = TRUE", conn)
+# === UploadProduction Page ===
+st.set_page_config(page_title="Upload Production", layout="wide")
+st.title("📤 Upload Production Record")
 
-@st.cache_data
-def get_parts_df():
-    with get_connection() as conn:
-        return pd.read_sql("SELECT id AS part_id, part_no FROM part_master WHERE is_active = TRUE", conn)
-
-# === Insert ฟังก์ชัน ===
-def insert_batch_to_production_log(df):
-    with get_connection() as conn:
-        cur = conn.cursor()
-        for _, row in df.iterrows():
-            sql = """
-                INSERT INTO production_log
-                (log_date, shift, department, machine_id, part_id, plan_qty, actual_qty, defect_qty, remark, created_by, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """
-            values = (
-                row["log_date"], row["shift"], row["department"],
-                int(row["machine_id"]), int(row["part_id"]),
-                int(row["plan_qty"]), int(row["actual_qty"]), int(row["defect_qty"]),
-                row.get("remark", ""), row["created_by"], datetime.now()
-            )
-            cur.execute(sql, values)
-        conn.commit()
-
-# === UI เริ่ม ===
-st.title("📤 Upload Production Log")
-
-uploaded_file = st.file_uploader("เลือกไฟล์งาน Production (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("📂 Upload Excel File (.xlsx)", type="xlsx")
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file)
+        xls = pd.ExcelFile(uploaded_file)
+        all_data = []
 
-        st.write("📄 ข้อมูลที่อัปโหลด:")
-        st.dataframe(df)
+        for sheet in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet, skiprows=0)
 
-        required_columns = ["log_date", "shift", "department", "machine_name", "part_no",
-                            "plan_qty", "actual_qty", "defect_qty", "created_by"]
-        if not all(col in df.columns for col in required_columns):
-            st.error(f"❌ ไฟล์ที่อัปโหลดต้องมีคอลัมน์ดังนี้: {', '.join(required_columns)}")
-        else:
-            # โหลด Mapping
-            machines_df = get_machines_df()
-            parts_df = get_parts_df()
+            # หาคอลัมน์ที่เริ่มต้นจาก log_date (P) เป็นต้นไป
+            col_start = df.columns.get_loc("log_date") if "log_date" in df.columns else None
+            if col_start is None:
+                st.warning(f"❌ ไม่พบคอลัมน์ 'log_date' ในชีท {sheet}")
+                continue
 
-            # Mapping machine_id
-            df = df.merge(machines_df, how="left", on="machine_name")
-            df = df.merge(parts_df, how="left", on="part_no")
+            df_trimmed = df.iloc[:, col_start:]
+            df_trimmed = df_trimmed.dropna(subset=["log_date", "machine_name"], how="any")
+            df_trimmed["log_date"] = pd.to_datetime(df_trimmed["log_date"]).dt.date
+            df_trimmed["created_at"] = datetime.now()
 
-            # ตรวจสอบว่า map ได้ครบไหม
-            if df["machine_id"].isnull().any():
-                st.error("❌ มี machine_name ที่ไม่ตรงกับฐานข้อมูล กรุณาตรวจสอบ")
-            elif df["part_id"].isnull().any():
-                st.error("❌ มี part_no ที่ไม่ตรงกับฐานข้อมูล กรุณาตรวจสอบ")
-            else:
-                if st.button("✅ อัปโหลดข้อมูลเข้า Database"):
-                    insert_batch_to_production_log(df)
-                    st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว!")
+            all_data.append(df_trimmed)
 
+        if all_data:
+            df_upload = pd.concat(all_data, ignore_index=True)
+            st.dataframe(df_upload)
+
+            if st.button("📥 Upload to Database"):
+                try:
+                    with get_connection() as conn:
+                        cur = conn.cursor()
+                        for _, row in df_upload.iterrows():
+                            cur.execute("""
+                                INSERT INTO production_log (log_date, shift, department, machine_name, part_no, plan_qty, actual_qty, defect_qty, created_by, created_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                row.get("log_date"),
+                                row.get("shift"),
+                                row.get("department"),
+                                row.get("machine_name"),
+                                row.get("part_no"),
+                                row.get("plan_qty", 0),
+                                row.get("actual_qty", 0),
+                                row.get("defect_qty", 0),
+                                row.get("created_by", ""),
+                                row.get("created_at"),
+                            ))
+                        conn.commit()
+                    st.success("✅ Upload เสร็จสมบูรณ์")
+                except Exception as e:
+                    st.error(f"❌ เกิดข้อผิดพลาดขณะบันทึก: {e}")
     except Exception as e:
-        st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+        st.error(f"❌ ไม่สามารถอ่านไฟล์ Excel ได้: {e}")
+else:
+    st.info("กรุณาอัปโหลดไฟล์ Excel ที่มีข้อมูลการผลิต โดยเริ่มจากคอลัมน์ log_date เป็นต้นไป")
