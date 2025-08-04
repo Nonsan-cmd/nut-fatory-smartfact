@@ -16,14 +16,14 @@ def load_data(start_date, end_date):
     with get_connection() as conn:
         query = """
         SELECT p.log_date, p.shift, m.machine_name, m.department,
-               pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty,
+               pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark,
                COALESCE(SUM(d.duration_min), 0) AS total_downtime_min
         FROM production_log p
         JOIN machine_list m ON p.machine_id = m.id
         JOIN part_master pt ON p.part_id = pt.id
         LEFT JOIN downtime_log d ON p.machine_id = d.machine_id AND p.log_date = d.log_date AND p.shift = d.shift
         WHERE p.log_date BETWEEN %s AND %s
-        GROUP BY p.log_date, p.shift, m.machine_name, m.department, pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty
+        GROUP BY p.log_date, p.shift, m.machine_name, m.department, pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark
         ORDER BY p.log_date DESC
         """
         return pd.read_sql(query, conn, params=(start_date, end_date))
@@ -76,7 +76,7 @@ if shift_option != "ทั้งหมด":
 # === Summary Table ===
 st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
-st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
+st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency", "remark"]])
 
 # === Chart: Efficiency By Machine ===
 st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
