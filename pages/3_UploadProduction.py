@@ -19,6 +19,9 @@ if uploaded_file:
         xls = pd.ExcelFile(uploaded_file)
         all_data = []
 
+        with get_connection() as conn:
+            machine_df = pd.read_sql("SELECT id, machine_name FROM machine_list", conn)
+
         for sheet in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet, skiprows=0)
 
@@ -34,6 +37,12 @@ if uploaded_file:
             df_trimmed["log_date"] = pd.to_datetime(df_trimmed["log_date"]).dt.date
             df_trimmed["created_at"] = datetime.now()
 
+            # Map machine_id
+            df_trimmed = df_trimmed.merge(machine_df, how="left", on="machine_name")
+            df_trimmed = df_trimmed.rename(columns={"id": "machine_id"})
+            df_trimmed = df_trimmed.drop(columns=["machine_name"])
+            df_trimmed = df_trimmed[df_trimmed["machine_id"].notna()]
+
             all_data.append(df_trimmed)
 
         if all_data:
@@ -46,19 +55,20 @@ if uploaded_file:
                         cur = conn.cursor()
                         for _, row in df_upload.iterrows():
                             cur.execute("""
-                                INSERT INTO production_log (log_date, shift, department, machine_name, part_no, plan_qty, actual_qty, defect_qty, created_by, created_at)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                INSERT INTO production_log (log_date, shift, department, machine_id, part_no, plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """, (
                                 row.get("log_date"),
                                 row.get("shift"),
                                 row.get("department"),
-                                row.get("machine_name"),
+                                int(row.get("machine_id")),
                                 row.get("part_no"),
                                 row.get("plan_qty", 0),
                                 row.get("actual_qty", 0),
                                 row.get("defect_qty", 0),
                                 row.get("created_by", ""),
                                 row.get("created_at"),
+                                row.get("remark", "")
                             ))
                         conn.commit()
                     st.success("✅ Upload เสร็จสมบูรณ์")
