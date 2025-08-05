@@ -124,8 +124,8 @@ with tab2:
     # === แสดงตาราง ===
     st.dataframe(df[[
         "id", "log_date", "shift", "department", "machine_name", "issue",
-        "status", "reporter", "assignee", "spare_part",
-        "created_at", "assigned_at", "repair_started_at", "completed_at"
+        "status", "reporter", "assignee", "spare_part_used",
+        "created_at", "assigned_at", "start_repair_at", "completed_at", "verified_at"
     ]], use_container_width=True)
 
     # === รายการดำเนินการ ===
