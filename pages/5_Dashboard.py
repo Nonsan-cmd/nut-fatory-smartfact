@@ -10,14 +10,21 @@ import plotly.express as px
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Load Data from View ===
+# === Load Data ===
 @st.cache_data(ttl=600)
 def load_data(start_date, end_date):
     with get_connection() as conn:
         query = """
-        SELECT * FROM efficiency_summary
-        WHERE log_date BETWEEN %s AND %s
-        ORDER BY log_date DESC
+        SELECT p.log_date, p.shift, m.machine_name, m.department,
+               pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark,
+               COALESCE(SUM(d.duration_min), 0) AS total_downtime_min
+        FROM production_log p
+        JOIN machine_list m ON p.machine_id = m.id
+        JOIN part_master pt ON p.part_id = pt.id
+        LEFT JOIN downtime_log d ON p.machine_id = d.machine_id AND p.log_date = d.log_date AND p.shift = d.shift
+        WHERE p.log_date BETWEEN %s AND %s
+        GROUP BY p.log_date, p.shift, m.machine_name, m.department, pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark
+        ORDER BY p.log_date DESC
         """
         return pd.read_sql(query, conn, params=(start_date, end_date))
 
@@ -69,25 +76,31 @@ if shift_option != "ทั้งหมด":
 # === Summary Table ===
 st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
-st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
+st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency", "remark"]])
 
 # === Chart: Efficiency By Machine ===
 st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
-df_grouped = df.groupby(["machine_name"], as_index=False).agg({
+df_grouped = df.groupby(["machine_name", "shift"], as_index=False).agg({
     "plan_qty": "sum",
     "actual_qty": "sum"
 })
 
+pivot_df = df_grouped.pivot(index="machine_name", columns="shift", values=["plan_qty", "actual_qty"]).fillna(0)
+pivot_df.columns = ['plan_day', 'plan_night', 'actual_day', 'actual_night']
+pivot_df["plan_total"] = pivot_df["plan_day"] + pivot_df["plan_night"]
+pivot_df["actual_total"] = pivot_df["actual_day"] + pivot_df["actual_night"]
+pivot_df = pivot_df.reset_index()
+
 fig = go.Figure()
 fig.add_trace(go.Bar(
-    x=df_grouped["machine_name"],
-    y=df_grouped["actual_qty"],
+    x=pivot_df["machine_name"],
+    y=pivot_df["actual_total"],
     name="Actual",
     marker_color="blue"
 ))
 fig.add_trace(go.Scatter(
-    x=df_grouped["machine_name"],
-    y=df_grouped["plan_qty"],
+    x=pivot_df["machine_name"],
+    y=pivot_df["plan_total"],
     name="Plan",
     mode="lines+markers",
     line=dict(color="orange", width=4),
@@ -112,7 +125,7 @@ total_downtime = df["total_downtime_min"].sum()
 total_good = total_actual - total_defect
 
 eff_percent = (total_good / total_plan * 100) if total_plan else 0
-downtime_percent = (total_downtime / (total_downtime + 1)) if total_plan else 0
+downtime_percent = (total_downtime / (total_downtime + 1)) if total_plan else 0  # scaled for comparison
 ng_percent = (total_defect / total_actual * 100) if total_actual else 0
 
 labels = ['Efficiency (%)', 'Downtime (%)', 'NG (%)']
