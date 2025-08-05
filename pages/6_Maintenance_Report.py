@@ -75,7 +75,7 @@ def load_repairs():
 # === Tabs ===
 tab1, tab2 = st.tabs(["📩 แจ้งซ่อม", "📋 รายงาน / ยืนยัน"])
 
-# === Tab1 แจ้งซ่อม ===
+# === Tab1: แจ้งซ่อม ===
 with tab1:
     st.subheader("📩 แจ้งซ่อมเครื่องจักร")
     if role in ["Operator", "Leader", "Officer", "Supervisor", "Admin"]:
@@ -94,12 +94,15 @@ with tab1:
                 insert_repair(log_date, shift, department, machine_name, issue, reporter)
                 st.success("✅ แจ้งซ่อมเรียบร้อย")
 
-# === Tab2 รายงาน / ดำเนินการ ===
+# === Tab2: รายงาน / ยืนยัน ===
 with tab2:
     st.subheader("📋 รายการซ่อมบำรุง")
     df = load_repairs()
 
-    # Filter UI
+    # 🩹 Patch: แปลง log_date เป็น datetime ก่อน filter
+    df["log_date"] = pd.to_datetime(df["log_date"], errors="coerce")
+
+    # === Filter ===
     col1, col2, col3 = st.columns(3)
     with col1:
         start = st.date_input("📅 วันที่เริ่ม", datetime.now(tz).date() - timedelta(days=7))
@@ -112,32 +115,32 @@ with tab2:
     if status_filter != "ทั้งหมด":
         df = df[df["status"] == status_filter]
 
-    # Export Button
+    # === Export Excel ===
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False)
     st.download_button("📥 ดาวน์โหลด Excel", data=buffer.getvalue(), file_name="maintenance_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # Show Table
+    # === แสดงตาราง ===
     st.dataframe(df[[
-    "id", "log_date", "shift", "department", "machine_name", "issue",
-    "status", "reporter", "assignee", "spare_part_used",
-    "created_at", "assigned_at", "start_repair_at", "completed_at", "verified_at"
-]], use_container_width=True)
+        "id", "log_date", "shift", "department", "machine_name", "issue",
+        "status", "reporter", "assignee", "spare_part",
+        "created_at", "assigned_at", "repair_started_at", "completed_at"
+    ]], use_container_width=True)
 
-    # Operation Section
+    # === รายการดำเนินการ ===
     for _, row in df.iterrows():
         if row["status"] == "Completed":
             continue
         with st.expander(f"[{row['status']}] เครื่อง {row['machine_name']} - {row['issue']}"):
             st.text(f"📅 วันที่: {row['log_date']} | 🕘 กะ: {row['shift']} | 🏭 แผนก: {row['department']}")
             st.text(f"👤 ผู้แจ้ง: {row['reporter']} | 🔧 ผู้รับผิดชอบ: {row.get('assignee','-')}")
-            if role in ["MN_Supervisor", "MN_Manager","Admin"] and row["status"] == "Pending":
+            if role in ["MN_Supervisor", "MN_Manager"] and row["status"] == "Pending":
                 assignee = st.text_input(f"มอบหมายให้ใคร", key=f"assign_{row['id']}")
                 if st.button("✅ Assign", key=f"btn_assign_{row['id']}"):
                     assign_job(row["id"], assignee)
                     st.rerun()
-            if role in ["Technician","Admin"] and row["status"] == "Assigned":
+            if role in ["Technician"] and row["status"] == "Assigned":
                 if st.button("▶️ เริ่มซ่อม", key=f"btn_start_{row['id']}"):
                     start_repair(row["id"])
                     st.rerun()
