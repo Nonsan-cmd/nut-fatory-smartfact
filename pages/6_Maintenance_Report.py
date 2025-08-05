@@ -1,107 +1,68 @@
 import streamlit as st
-import pandas as pd
 import psycopg2
-from datetime import datetime, date
-import pytz
-import io
+from datetime import datetime
 import requests
 
-# === CONNECT ===
+# === Telegram Configuration ===
+TELEGRAM_TOKEN = "8479232119:AAEVm2sS365HzMHoeoQGOynqUVPV70A-jHA"
+TELEGRAM_CHAT_ID = "-4786867430"
+
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=payload)
+    except Exception as e:
+        st.error(f"ไม่สามารถส่งข้อความแจ้งเตือน Telegram ได้: {e}")
+
+# === Database Connection ===
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === TELEGRAM ===
-def send_telegram_message(message):
-    token = st.secrets["telegram"]["token"]
-    chat_id = st.secrets["telegram"]["chat_id"]
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message}
-    try:
-        requests.post(url, data=payload)
-    except:
-        st.error("ไม่สามารถส่งข้อความ Telegram ได้")
-
-# === LOAD DATA ===
-def load_maintenance_data():
+def insert_repair_request(data):
     with get_connection() as conn:
-        df = pd.read_sql("SELECT * FROM maintenance_log ORDER BY log_date DESC", conn)
-    df["log_date"] = pd.to_datetime(df["log_date"]).dt.date
-    df["created_at"] = pd.to_datetime(df["created_at"])
-    df["completed_at"] = pd.to_datetime(df["completed_at"])
-    return df
+        cur = conn.cursor()
+        query = """
+        INSERT INTO repair_request (log_date, shift, department, machine_name, issue_description, reported_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        cur.execute(query, (
+            data["log_date"], data["shift"], data["department"], data["machine_name"],
+            data["issue_description"], data["reported_by"], data["created_at"]
+        ))
+        conn.commit()
 
-# === HEADER ===
-st.set_page_config(page_title="Maintenance Report", layout="wide")
-st.title("📊 รายงานซ่อมทั้งหมด")
+# === Streamlit Page ===
+st.set_page_config(page_title="แจ้งซ่อมเครื่องจักร", layout="centered")
+st.title("🛠️ แจ้งซ่อมเครื่องจักร")
 
-df = load_maintenance_data()
+with st.form("repair_form"):
+    st.markdown("กรุณากรอกข้อมูลให้ครบถ้วน")
+    log_date = st.date_input("📅 วันที่แจ้งซ่อม", datetime.today())
+    shift = st.selectbox("🕘 กะการทำงาน", ["Day", "Night"])
+    department = st.selectbox("🏭 แผนก", ["FM", "TP", "FI", "OS", "WH"])
+    machine_name = st.text_input("⚙️ ชื่อเครื่องจักร")
+    issue_description = st.text_area("❗ รายละเอียดปัญหา")
+    reported_by = st.text_input("👤 ผู้แจ้งซ่อม")
+    submitted = st.form_submit_button("📤 แจ้งซ่อม")
 
-# === FILTER SECTION ===
-st.header("🎛 ตัวกรอง")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    status_filter = st.multiselect("🛠️ สถานะ", options=df["status"].dropna().unique(), default=list(df["status"].unique()))
-with col2:
-    dept_filter = st.multiselect("🏭 แผนก", options=df["department"].dropna().unique(), default=list(df["department"].unique()))
-with col3:
-    start_date = st.date_input("📅 เริ่ม", date.today())
-    end_date = st.date_input("📅 สิ้นสุด", date.today())
-
-# === FILTER APPLY ===
-df_filtered = df[
-    (df["status"].isin(status_filter)) &
-    (df["department"].isin(dept_filter)) &
-    (df["log_date"] >= start_date) &
-    (df["log_date"] <= end_date)
-]
-
-# === TABLE DISPLAY ===
-st.dataframe(df_filtered[[
-    "id", "log_date", "shift", "department", "machine_name",
-    "issue", "reporter", "status", "assignee", "created_at", "completed_at"
-]])
-
-# === CONFIRM COMPLETION ===
-st.subheader("⚙️ ดำเนินการ")
-
-df_pending = df[df["status"] != "Completed"]
-
-for i, row in df_pending.iterrows():
-    with st.expander(f"[{row['status']}] เครื่อง {row['machine_name']} - {row['issue']}"):
-        st.write(f"แจ้งโดย: {row['reporter']} | วันที่: {row['log_date']} กะ: {row['shift']} | แผนก: {row['department']}")
-        if st.button("✅ ยืนยันการซ่อมเสร็จ", key=f"complete_{row['id']}"):
-            with get_connection() as conn:
-                cur = conn.cursor()
-                completed_time = datetime.now(pytz.timezone("Asia/Bangkok"))
-                cur.execute("""
-                    UPDATE maintenance_log
-                    SET status = 'Completed', completed_at = %s
-                    WHERE id = %s
-                """, (completed_time, row["id"]))
-                conn.commit()
-            msg = f"✅ ซ่อมเสร็จแล้ว\n🔧 เครื่อง: {row['machine_name']}\n📅 วันที่: {row['log_date']}\n👷‍♂️ ผู้แจ้ง: {row['reporter']}\n📌 ปัญหา: {row['issue']}"
-            send_telegram_message(msg)
-            st.success("อัปเดตสถานะเป็น Completed แล้ว")
-            st.rerun()
-
-# === SUMMARY BOX ===
-st.sidebar.markdown("## 📌 สรุปงานซ่อม")
-pending_count = df[df["status"] != "Completed"].shape[0]
-completed_count = df[df["status"] == "Completed"].shape[0]
-st.sidebar.markdown(f"🛠️ งานคงค้าง: **{pending_count}**")
-st.sidebar.markdown(f"✅ ซ่อมเสร็จแล้ว: **{completed_count}**")
-
-# === EXPORT TO EXCEL ===
-st.subheader("⬇️ Export รายงาน")
-
-buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-    df_filtered.to_excel(writer, sheet_name="Maintenance_Report", index=False)
-
-st.download_button(
-    label="📥 ดาวน์โหลด Excel",
-    data=buffer.getvalue(),
-    file_name=f"maintenance_report_{date.today()}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+    if submitted:
+        if not all([log_date, shift, department, machine_name, issue_description, reported_by]):
+            st.warning("กรุณากรอกข้อมูลให้ครบถ้วนก่อนแจ้งซ่อม")
+        else:
+            data = {
+                "log_date": log_date,
+                "shift": shift,
+                "department": department,
+                "machine_name": machine_name,
+                "issue_description": issue_description,
+                "reported_by": reported_by,
+                "created_at": datetime.now(),
+            }
+            try:
+                insert_repair_request(data)
+                telegram_msg = f"📢 แจ้งซ่อมใหม่\nวันที่: {log_date}\nกะ: {shift}\nแผนก: {department}\nเครื่อง: {machine_name}\nรายละเอียด: {issue_description}\nผู้แจ้ง: {reported_by}"
+                send_telegram_message(telegram_msg)
+                st.success("✅ แจ้งซ่อมสำเร็จและส่งข้อความไปยัง Telegram แล้ว")
+            except Exception as e:
+                st.error(f"❌ แจ้งซ่อมไม่สำเร็จ: {e}")
