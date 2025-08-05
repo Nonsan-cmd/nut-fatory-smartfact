@@ -132,12 +132,12 @@ with tab2:
         with st.expander(f"[{row['status']}] เครื่อง {row['machine_name']} - {row['issue']}"):
             st.text(f"📅 วันที่: {row['log_date']} | 🕘 กะ: {row['shift']} | 🏭 แผนก: {row['department']}")
             st.text(f"👤 ผู้แจ้ง: {row['reporter']} | 🔧 ผู้รับผิดชอบ: {row.get('assignee','-')}")
-            if role in ["MN_Supervisor", "MN_Manager"] and row["status"] == "Pending":
+            if role in ["MN_Supervisor", "MN_Manager","Admin"] and row["status"] == "Pending":
                 assignee = st.text_input(f"มอบหมายให้ใคร", key=f"assign_{row['id']}")
                 if st.button("✅ Assign", key=f"btn_assign_{row['id']}"):
                     assign_job(row["id"], assignee)
                     st.rerun()
-            if role in ["Technician"] and row["status"] == "Assigned":
+            if role in ["Technician","Admin"] and row["status"] == "Assigned":
                 if st.button("▶️ เริ่มซ่อม", key=f"btn_start_{row['id']}"):
                     start_repair(row["id"])
                     st.rerun()
