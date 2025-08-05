@@ -1,68 +1,100 @@
+# 6_Maintenance_Report.py
 import streamlit as st
+import pandas as pd
 import psycopg2
-from datetime import datetime
-import requests
+from datetime import datetime, timedelta
+import pytz
 
-# === Telegram Configuration ===
-TELEGRAM_TOKEN = "8479232119:AAEVm2sS365HzMHoeoQGOynqUVPV70A-jHA"
-TELEGRAM_CHAT_ID = "-4786867430"
+# === Config ===
+tz = pytz.timezone("Asia/Bangkok")
 
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    try:
-        requests.post(url, data=payload)
-    except Exception as e:
-        st.error(f"ไม่สามารถส่งข้อความแจ้งเตือน Telegram ได้: {e}")
-
-# === Database Connection ===
+# === Connection ===
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-def insert_repair_request(data):
+# === Add New Repair Request ===
+def insert_repair(log_date, shift, department, machine_name, issue, reporter):
     with get_connection() as conn:
         cur = conn.cursor()
-        query = """
-        INSERT INTO repair_request (log_date, shift, department, machine_name, issue_description, reported_by, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """
-        cur.execute(query, (
-            data["log_date"], data["shift"], data["department"], data["machine_name"],
-            data["issue_description"], data["reported_by"], data["created_at"]
-        ))
+        cur.execute("""
+            INSERT INTO maintenance_log 
+            (log_date, shift, department, machine_name, issue, reporter, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, 'Pending', %s)
+        """, (log_date, shift, department, machine_name, issue, reporter, datetime.now(tz)))
         conn.commit()
 
-# === Streamlit Page ===
-st.set_page_config(page_title="แจ้งซ่อมเครื่องจักร", layout="centered")
-st.title("🛠️ แจ้งซ่อมเครื่องจักร")
+# === Assign Job ===
+def assign_job(job_id, assignee):
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE maintenance_log SET status = 'Assigned', assignee = %s WHERE id = %s
+        """, (assignee, job_id))
+        conn.commit()
 
-with st.form("repair_form"):
-    st.markdown("กรุณากรอกข้อมูลให้ครบถ้วน")
-    log_date = st.date_input("📅 วันที่แจ้งซ่อม", datetime.today())
-    shift = st.selectbox("🕘 กะการทำงาน", ["Day", "Night"])
-    department = st.selectbox("🏭 แผนก", ["FM", "TP", "FI", "OS", "WH"])
-    machine_name = st.text_input("⚙️ ชื่อเครื่องจักร")
-    issue_description = st.text_area("❗ รายละเอียดปัญหา")
-    reported_by = st.text_input("👤 ผู้แจ้งซ่อม")
-    submitted = st.form_submit_button("📤 แจ้งซ่อม")
+# === Complete Job ===
+def complete_job(job_id):
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE maintenance_log SET status = 'Completed', completed_at = %s WHERE id = %s
+        """, (datetime.now(tz), job_id))
+        conn.commit()
 
-    if submitted:
-        if not all([log_date, shift, department, machine_name, issue_description, reported_by]):
-            st.warning("กรุณากรอกข้อมูลให้ครบถ้วนก่อนแจ้งซ่อม")
-        else:
-            data = {
-                "log_date": log_date,
-                "shift": shift,
-                "department": department,
-                "machine_name": machine_name,
-                "issue_description": issue_description,
-                "reported_by": reported_by,
-                "created_at": datetime.now(),
-            }
-            try:
-                insert_repair_request(data)
-                telegram_msg = f"📢 แจ้งซ่อมใหม่\nวันที่: {log_date}\nกะ: {shift}\nแผนก: {department}\nเครื่อง: {machine_name}\nรายละเอียด: {issue_description}\nผู้แจ้ง: {reported_by}"
-                send_telegram_message(telegram_msg)
-                st.success("✅ แจ้งซ่อมสำเร็จและส่งข้อความไปยัง Telegram แล้ว")
-            except Exception as e:
-                st.error(f"❌ แจ้งซ่อมไม่สำเร็จ: {e}")
+# === Load Repair Data ===
+def load_repairs():
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM maintenance_log ORDER BY created_at DESC", conn)
+
+# === UI ===
+st.title("🛠 Maintenance Report")
+
+tab1, tab2 = st.tabs(["📩 แจ้งซ่อม", "📋 รายงาน / ยืนยัน"])
+
+with tab1:
+    st.subheader("📩 แจ้งซ่อมใหม่")
+    with st.form("repair_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            log_date = st.date_input("วันที่แจ้งซ่อม", datetime.now(tz).date())
+            shift = st.selectbox("กะ", ["Day", "Night"])
+            department = st.selectbox("แผนก", ["Forming", "Tapping", "Final", "Outsource", "Warehouse"])
+        with col2:
+            machine_name = st.text_input("ชื่อเครื่องจักร")
+            issue = st.text_area("ปัญหา")
+            reporter = st.text_input("ผู้แจ้ง")
+        submitted = st.form_submit_button("📨 แจ้งซ่อม")
+        if submitted:
+            insert_repair(log_date, shift, department, machine_name, issue, reporter)
+            st.success("✅ แจ้งซ่อมเรียบร้อยแล้ว")
+
+with tab2:
+    st.subheader("📋 รายการแจ้งซ่อมทั้งหมด")
+    df = load_repairs()
+    status_filter = st.selectbox("กรองสถานะ", ["ทั้งหมด", "Pending", "Assigned", "Completed"])
+    if status_filter != "ทั้งหมด":
+        df = df[df["status"] == status_filter]
+
+    st.dataframe(df)
+
+    st.markdown("### 🛠 ดำเนินการ")
+    for idx, row in df.iterrows():
+        with st.expander(f"[{row['status']}] เครื่อง {row['machine_name']} - {row['issue']}"):
+            st.text(f"แจ้งโดย: {row['reporter']} | วันที่: {row['log_date']} กะ: {row['shift']}")
+            if row["status"] == "Pending":
+                assignee = st.text_input(f"มอบหมายให้ใคร (งาน #{row['id']})", key=f"assign_{row['id']}")
+                if st.button("✅ Assign", key=f"btn_assign_{row['id']}"):
+                    assign_job(row["id"], assignee)
+                    st.success("มอบหมายงานเรียบร้อย")
+                    st.rerun()
+            elif row["status"] == "Assigned":
+                if st.button("✅ ยืนยันการซ่อมเสร็จ", key=f"btn_complete_{row['id']}"):
+                    complete_job(row["id"])
+                    st.success("บันทึกการซ่อมเสร็จแล้ว")
+                    st.rerun()
+
+# === Summary Count for Dashboard ===
+pending_count = df[df["status"] != "Completed"].shape[0]
+completed_count = df[df["status"] == "Completed"].shape[0]
+st.sidebar.metric("🔧 งานคงค้าง", pending_count)
+st.sidebar.metric("✅ ซ่อมเสร็จแล้ว", completed_count)
