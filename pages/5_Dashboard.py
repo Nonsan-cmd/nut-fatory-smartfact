@@ -16,14 +16,14 @@ def load_data(start_date, end_date):
     with get_connection() as conn:
         query = """
         SELECT p.log_date, p.shift, m.machine_name, m.department,
-               pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark,
+               pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty,
                COALESCE(SUM(d.duration_min), 0) AS total_downtime_min
         FROM production_log p
         JOIN machine_list m ON p.machine_id = m.id
         JOIN part_master pt ON p.part_id = pt.id
         LEFT JOIN downtime_log d ON p.machine_id = d.machine_id AND p.log_date = d.log_date AND p.shift = d.shift
         WHERE p.log_date BETWEEN %s AND %s
-        GROUP BY p.log_date, p.shift, m.machine_name, m.department, pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty, p.remark
+        GROUP BY p.log_date, p.shift, m.machine_name, m.department, pt.part_no, p.plan_qty, p.actual_qty, p.defect_qty
         ORDER BY p.log_date DESC
         """
         return pd.read_sql(query, conn, params=(start_date, end_date))
@@ -76,7 +76,7 @@ if shift_option != "ทั้งหมด":
 # === Summary Table ===
 st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
-st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency", "remark"]])
+st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency"]])
 
 # === Chart: Efficiency By Machine ===
 st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
@@ -114,26 +114,6 @@ fig.update_layout(
     legend=dict(orientation="h")
 )
 st.plotly_chart(fig, use_container_width=True)
-
-# === Donut Graph: Efficiency vs Downtime vs NG ===
-st.subheader("📊 สัดส่วน Efficiency, Downtime และ NG")
-total_plan = df["plan_qty"].sum()
-total_actual = df["actual_qty"].sum()
-total_defect = df["defect_qty"].sum()
-total_downtime = df["total_downtime_min"].sum()
-
-total_good = total_actual - total_defect
-
-eff_percent = (total_good / total_plan * 100) if total_plan else 0
-downtime_percent = (total_downtime / (total_downtime + 1)) if total_plan else 0  # scaled for comparison
-ng_percent = (total_defect / total_actual * 100) if total_actual else 0
-
-labels = ['Efficiency (%)', 'Downtime (%)', 'NG (%)']
-values = [eff_percent, downtime_percent, ng_percent]
-
-fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5)])
-fig_donut.update_layout(title="Donut Chart - Efficiency vs Downtime vs NG")
-st.plotly_chart(fig_donut, use_container_width=True)
 
 # === Chart: Downtime ===
 st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
