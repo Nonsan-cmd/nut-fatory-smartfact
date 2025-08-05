@@ -1,4 +1,3 @@
-# 6_Maintenance_Report.py
 import streamlit as st
 import pandas as pd
 import psycopg2
