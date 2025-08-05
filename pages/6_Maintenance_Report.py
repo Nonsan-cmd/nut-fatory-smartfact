@@ -127,6 +127,15 @@ with tab2:
         "status", "reporter", "assignee", "spare_part_used",
         "created_at", "assigned_at", "start_repair_at", "completed_at", "verified_at"
     ]], use_container_width=True)
+# === Summary Count ===
+total_pending = df[df["status"].isin(["Pending", "Assigned", "Working"])].shape[0]
+total_completed = df[df["status"] == "Completed"].shape[0]
+
+col_a, col_b = st.columns(2)
+with col_a:
+    st.metric("🕒 งานที่ยังรอดำเนินการ", total_pending)
+with col_b:
+    st.metric("✅ งานที่ดำเนินการเสร็จแล้ว", total_completed)
 
     # === รายการดำเนินการ ===
     for _, row in df.iterrows():
