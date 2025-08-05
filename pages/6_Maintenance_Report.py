@@ -1,167 +1,129 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
+from datetime import datetime
+import pytz
 import io
-from datetime import datetime, timedelta
-import plotly.graph_objects as go
-import plotly.express as px
+import requests
+
+# === Telegram Setting ===
+TELEGRAM_TOKEN = st.secrets["telegram"]["token"]
+TELEGRAM_CHAT_ID = st.secrets["telegram"]["chat_id"]
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        params = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+        requests.get(url, params=params)
+    except:
+        st.warning("ส่งข้อความ Telegram ไม่สำเร็จ")
 
 # === Database Connection ===
 def get_connection():
     return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-# === Load Data from View ===
-@st.cache_data(ttl=600)
-def load_data(start_date, end_date):
-    with get_connection() as conn:
-        query = """
-        SELECT * FROM efficiency_summary
-        WHERE log_date BETWEEN %s AND %s
-        ORDER BY log_date DESC
-        """
-        return pd.read_sql(query, conn, params=(start_date, end_date))
-
-@st.cache_data(ttl=600)
-def load_downtime_detail(start_date, end_date):
-    with get_connection() as conn:
-        query = """
-        SELECT d.log_date, d.shift, m.machine_name, r.reason_name, d.duration_min
-        FROM downtime_log d
-        JOIN machine_list m ON d.machine_id = m.id
-        JOIN downtime_reason_master r ON d.downtime_reason_id = r.id
-        WHERE d.log_date BETWEEN %s AND %s
-        ORDER BY d.log_date DESC
-        """
-        return pd.read_sql(query, conn, params=(start_date, end_date))
-
-@st.cache_data(ttl=600)
-def load_maintenance_summary():
-    with get_connection() as conn:
-        query = """
-        SELECT status, COUNT(*) as count
-        FROM maintenance_log
-        GROUP BY status
-        """
-        return pd.read_sql(query, conn)
-
 # === Layout ===
-st.set_page_config(page_title="Dashboard Efficiency", layout="wide")
-st.title("📊 Dashboard ประสิทธิภาพการผลิต (Efficiency)")
+st.set_page_config(page_title="Maintenance Report", layout="wide")
+st.title("🛠 รายงานและติดตามงานซ่อมบำรุง")
 
-# Filter Section
-st.sidebar.header("🔎 ตัวกรองข้อมูล")
-today = datetime.today().date()
-start_date = st.sidebar.date_input("📅 วันที่เริ่มต้น", today - timedelta(days=7))
-end_date = st.sidebar.date_input("📅 วันที่สิ้นสุด", today)
+# === แจ้งซ่อมใหม่ ===
+with st.expander("📥 แจ้งซ่อมใหม่"):
+    with st.form("แจ้งซ่อม"):
+        col1, col2 = st.columns(2)
+        with col1:
+            log_date = st.date_input("📅 วันที่แจ้ง", datetime.now().date())
+            shift = st.selectbox("🕘 กะ", ["Day", "Night"])
+            department = st.text_input("🏭 แผนกที่แจ้ง")
+        with col2:
+            machine_name = st.text_input("⚙️ เครื่องจักร")
+            reporter = st.text_input("👨‍🔧 ผู้แจ้งซ่อม")
+            issue = st.text_area("❗ รายละเอียดปัญหา")
 
-# Load and filter data
-df = load_data(start_date, end_date)
-df_detail = load_downtime_detail(start_date, end_date)
-maintenance_df = load_maintenance_summary()
+        submitted = st.form_submit_button("📨 แจ้งซ่อม")
+        if submitted:
+            with get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO maintenance_log (log_date, shift, department, machine_name, issue, reporter, status, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'Pending', NOW())
+                """, (log_date, shift, department, machine_name, issue, reporter))
+                conn.commit()
+            st.success("✅ แจ้งซ่อมเรียบร้อยแล้ว")
+            send_telegram(f"📥 แจ้งซ่อมใหม่!\nแผนก: {department}\nเครื่อง: {machine_name}\nรายละเอียด: {issue}\nโดย: {reporter}")
 
-# Maintenance summary
-st.sidebar.markdown("### 🛠️ สถานะงานซ่อม")
-for _, row in maintenance_df.iterrows():
-    st.sidebar.write(f"🔧 {row['status']}: {int(row['count'])} งาน")
+# === โหลดข้อมูลทั้งหมด ===
+@st.cache_data(ttl=300)
+def load_data():
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM maintenance_log ORDER BY id DESC", conn)
 
-# Filters
-all_depts = sorted(df["department"].dropna().unique())
-selected_dept = st.sidebar.selectbox("🏭 เลือกแผนก", ["ทั้งหมด"] + all_depts)
-if selected_dept != "ทั้งหมด":
-    df = df[df["department"] == selected_dept]
-    df_detail = df_detail[df_detail["machine_name"].isin(df["machine_name"].unique())]
+df = load_data()
 
-all_machines = sorted(df["machine_name"].dropna().unique())
-selected_machine = st.sidebar.selectbox("⚙️ เลือกเครื่องจักร", ["ทั้งหมด"] + all_machines)
-if selected_machine != "ทั้งหมด":
-    df = df[df["machine_name"] == selected_machine]
-    df_detail = df_detail[df_detail["machine_name"] == selected_machine]
+# === ยืนยันการซ่อมเสร็จ ===
+st.subheader("✅ ยืนยันการซ่อมเสร็จ")
+df_pending = df[df["status"] != "Completed"]
+if df_pending.empty:
+    st.info("ไม่มีรายการคงค้าง")
+else:
+    selected_row = st.selectbox("เลือกรายการที่ต้องการยืนยัน", df_pending["id"].astype(str) + " | " + df_pending["machine_name"] + " | " + df_pending["issue"])
+    if st.button("✅ ยืนยันซ่อมเสร็จ"):
+        job_id = int(selected_row.split(" | ")[0])
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE maintenance_log SET status='Completed', completed_at=NOW() WHERE id = %s
+            """, (job_id,))
+            conn.commit()
+        st.success("✅ บันทึกเรียบร้อยแล้ว")
+        send_telegram(f"✅ ซ่อมเสร็จแล้ว!\nJob ID: {job_id}")
 
-shift_option = st.sidebar.selectbox("🕘 เลือกกะ", ["ทั้งหมด", "Day", "Night"])
-if shift_option != "ทั้งหมด":
-    df = df[df["shift"] == shift_option]
-    df_detail = df_detail[df_detail["shift"] == shift_option]
+# === มอบหมายงาน (Assign) ===
+st.subheader("👨‍🔧 มอบหมายงานซ่อม")
+df_assignable = df[df["status"] == "Pending"]
+if not df_assignable.empty:
+    selected_assign = st.selectbox("เลือกรายการเพื่อมอบหมาย", df_assignable["id"].astype(str) + " | " + df_assignable["machine_name"])
+    assign_to = st.text_input("👷‍♂️ มอบหมายให้")
+    if st.button("📌 มอบหมาย"):
+        job_id = int(selected_assign.split(" | ")[0])
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE maintenance_log SET status='Assigned', assign_to=%s WHERE id = %s
+            """, (assign_to, job_id))
+            conn.commit()
+        st.success("📌 มอบหมายงานเรียบร้อยแล้ว")
+        send_telegram(f"📌 มอบหมายงานซ่อม!\nเครื่อง: {df_assignable[df_assignable['id']==job_id]['machine_name'].values[0]}\nผู้รับผิดชอบ: {assign_to}")
 
-# === Summary Table ===
-st.subheader("📋 สรุปข้อมูลการผลิต")
-df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
-st.dataframe(df[[
-    "log_date", "shift", "department", "machine_name", "part_no",
-    "plan_qty", "actual_qty", "defect_qty", "total_downtime_min",
-    "efficiency", "remark"
-]])
+# === Report & Filter ===
+st.subheader("📊 รายงานซ่อมทั้งหมด")
 
-# === Chart: Efficiency By Machine ===
-st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
-df_grouped = df.groupby(["machine_name"], as_index=False).agg({
-    "plan_qty": "sum",
-    "actual_qty": "sum"
-})
+with st.expander("📎 ตัวกรอง"):
+    status_filter = st.multiselect("📌 สถานะ", df["status"].unique().tolist(), default=df["status"].unique().tolist())
+    dept_filter = st.multiselect("🏭 แผนก", df["department"].dropna().unique().tolist(), default=df["department"].dropna().unique().tolist())
+    start = st.date_input("เริ่ม", value=df["log_date"].min())
+    end = st.date_input("สิ้นสุด", value=df["log_date"].max())
 
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=df_grouped["machine_name"],
-    y=df_grouped["actual_qty"],
-    name="Actual",
-    marker_color="blue"
-))
-fig.add_trace(go.Scatter(
-    x=df_grouped["machine_name"],
-    y=df_grouped["plan_qty"],
-    name="Plan",
-    mode="lines+markers",
-    line=dict(color="orange", width=4),
-    marker=dict(size=10)
-))
-fig.update_layout(
-    barmode="group",
-    xaxis_title="Machine",
-    yaxis_title="Qty",
-    title="Actual (Bar) vs Plan (Line) By Machine",
-    legend=dict(orientation="h")
+df_filtered = df[
+    (df["status"].isin(status_filter)) &
+    (df["department"].isin(dept_filter)) &
+    (df["log_date"] >= pd.to_datetime(start)) &
+    (df["log_date"] <= pd.to_datetime(end))
+]
+
+# Format datetime + timezone
+tz = pytz.timezone("Asia/Bangkok")
+df_filtered["created_at"] = pd.to_datetime(df_filtered["created_at"]).dt.tz_localize("UTC").dt.tz_convert(tz)
+df_filtered["completed_at"] = pd.to_datetime(df_filtered["completed_at"]).dt.tz_localize("UTC").dt.tz_convert(tz)
+
+st.dataframe(df_filtered[["id", "log_date", "shift", "department", "machine_name", "issue", "reporter", "status", "assign_to", "created_at", "completed_at"]])
+
+# === Export Button ===
+buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    df_filtered.to_excel(writer, index=False, sheet_name="Maintenance_Report")
+st.download_button(
+    label="📥 ดาวน์โหลดรายงาน Excel",
+    data=buffer.getvalue(),
+    file_name=f"maintenance_report_{datetime.now().date()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
-st.plotly_chart(fig, use_container_width=True)
-
-# === Donut Chart: Efficiency vs Downtime vs NG ===
-st.subheader("📊 สัดส่วน Efficiency, Downtime และ NG")
-total_plan = df["plan_qty"].sum()
-total_actual = df["actual_qty"].sum()
-total_defect = df["defect_qty"].sum()
-total_downtime = df["total_downtime_min"].sum()
-
-total_good = total_actual - total_defect
-
-eff_percent = (total_good / total_plan * 100) if total_plan else 0
-downtime_percent = (total_downtime / (total_downtime + total_plan) * 100) if total_plan else 0
-ng_percent = (total_defect / total_actual * 100) if total_actual else 0
-
-labels = ['Efficiency (%)', 'Downtime (%)', 'NG (%)']
-values = [eff_percent, downtime_percent, ng_percent]
-
-fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5)])
-fig_donut.update_layout(title="Donut Chart - Efficiency vs Downtime vs NG")
-st.plotly_chart(fig_donut, use_container_width=True)
-
-# === Chart: Downtime by Reason ===
-st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
-df_detail_grouped = df_detail.groupby(["log_date", "reason_name"], as_index=False)["duration_min"].sum()
-fig2 = px.bar(df_detail_grouped, x="log_date", y="duration_min", color="reason_name", barmode="stack")
-fig2.update_layout(title="📌 Downtime Summary by Reason")
-st.plotly_chart(fig2, use_container_width=True)
-
-# === Download Section ===
-st.subheader("⬇️ ดาวน์โหลดข้อมูลทั้งหมด")
-st.markdown("ดาวน์โหลดไฟล์ Excel ที่รวมทั้งข้อมูลการผลิตและ Downtime อย่างมืออาชีพ")
-col1, col2 = st.columns([1, 4])
-with col2:
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="Summary", index=False)
-        df_detail.to_excel(writer, sheet_name="Downtime Detail", index=False)
-    st.download_button(
-        label="📥 Export Dashboard to Excel",
-        data=buffer.getvalue(),
-        file_name=f"dashboard_efficiency_{datetime.now().date()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="ดาวน์โหลดข้อมูลทั้งหมดในรูปแบบ Excel พร้อม Pivot"
-    )
