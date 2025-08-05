@@ -61,10 +61,11 @@ with st.form("login_form", clear_on_submit=False):
             st.session_state.username = display_name
             st.session_state.role = role
             st.success(f"ยินดีต้อนรับคุณ {display_name} ({role})")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
 # === Auto redirect if already logged in ===
 if st.session_state.authenticated:
     redirect_by_role(st.session_state.role)
+
