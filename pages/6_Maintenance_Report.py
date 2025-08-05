@@ -86,8 +86,8 @@ with tab2:
 
     df = load_repairs()
     df["log_date"] = pd.to_datetime(df["log_date"])
-    df["created_at"] = pd.to_datetime(df["created_at"]).dt.tz_convert(tz)
-    df["completed_at"] = pd.to_datetime(df["completed_at"]).dt.tz_convert(tz) if "completed_at" in df.columns else None
+    df["completed_at"] = pd.to_datetime(df["completed_at"]).dt.tz_localize("UTC").dt.tz_convert(tz)
+    df["completed_at"] = pd.to_datetime(df["completed_at"]).dt.tz_localize("UTC").dt.tz_convert(tz) if "completed_at" in df.columns else None
 
     colf1, colf2 = st.columns(2)
     with colf1:
