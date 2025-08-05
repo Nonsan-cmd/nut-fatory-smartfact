@@ -119,7 +119,11 @@ with tab2:
     st.download_button("📥 ดาวน์โหลด Excel", data=buffer.getvalue(), file_name="maintenance_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # Show Table
-    st.dataframe(df[["id", "log_date", "shift", "department", "machine_name", "issue", "status", "reporter", "assignee", "spare_part", "created_at", "assigned_at", "repair_started_at", "completed_at"]], use_container_width=True)
+    st.dataframe(df[[
+    "id", "log_date", "shift", "department", "machine_name", "issue",
+    "status", "reporter", "assignee", "spare_part_used",
+    "created_at", "assigned_at", "start_repair_at", "completed_at", "verified_at"
+]], use_container_width=True)
 
     # Operation Section
     for _, row in df.iterrows():
