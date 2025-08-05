@@ -21,7 +21,6 @@ def load_data(start_date, end_date):
         """
         return pd.read_sql(query, conn, params=(start_date, end_date))
 
-# === Load Downtime Detail ===
 @st.cache_data(ttl=600)
 def load_downtime_detail(start_date, end_date):
     with get_connection() as conn:
@@ -34,6 +33,16 @@ def load_downtime_detail(start_date, end_date):
         ORDER BY d.log_date DESC
         """
         return pd.read_sql(query, conn, params=(start_date, end_date))
+
+@st.cache_data(ttl=600)
+def load_maintenance_summary():
+    with get_connection() as conn:
+        query = """
+        SELECT status, COUNT(*) as count
+        FROM maintenance_log
+        GROUP BY status
+        """
+        return pd.read_sql(query, conn)
 
 # === Layout ===
 st.set_page_config(page_title="Dashboard Efficiency", layout="wide")
@@ -48,7 +57,14 @@ end_date = st.sidebar.date_input("📅 วันที่สิ้นสุด",
 # Load and filter data
 df = load_data(start_date, end_date)
 df_detail = load_downtime_detail(start_date, end_date)
+maintenance_df = load_maintenance_summary()
 
+# Maintenance summary
+st.sidebar.markdown("### 🛠️ สถานะงานซ่อม")
+for _, row in maintenance_df.iterrows():
+    st.sidebar.write(f"🔧 {row['status']}: {int(row['count'])} งาน")
+
+# Filters
 all_depts = sorted(df["department"].dropna().unique())
 selected_dept = st.sidebar.selectbox("🏭 เลือกแผนก", ["ทั้งหมด"] + all_depts)
 if selected_dept != "ทั้งหมด":
@@ -69,7 +85,11 @@ if shift_option != "ทั้งหมด":
 # === Summary Table ===
 st.subheader("📋 สรุปข้อมูลการผลิต")
 df["efficiency"] = (df["actual_qty"] / df["plan_qty"].replace(0, 1)) * 100
-st.dataframe(df[["log_date", "shift", "department", "machine_name", "part_no", "plan_qty", "actual_qty", "defect_qty", "total_downtime_min", "efficiency", "remark"]])
+st.dataframe(df[[
+    "log_date", "shift", "department", "machine_name", "part_no",
+    "plan_qty", "actual_qty", "defect_qty", "total_downtime_min",
+    "efficiency", "remark"
+]])
 
 # === Chart: Efficiency By Machine ===
 st.subheader("📊 กราฟเปรียบเทียบ Actual (แท่ง) vs Plan (เส้น) By Machine")
@@ -102,7 +122,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# === Donut Graph: Efficiency vs Downtime vs NG ===
+# === Donut Chart: Efficiency vs Downtime vs NG ===
 st.subheader("📊 สัดส่วน Efficiency, Downtime และ NG")
 total_plan = df["plan_qty"].sum()
 total_actual = df["actual_qty"].sum()
@@ -122,7 +142,7 @@ fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5)])
 fig_donut.update_layout(title="Donut Chart - Efficiency vs Downtime vs NG")
 st.plotly_chart(fig_donut, use_container_width=True)
 
-# === Chart: Downtime ===
+# === Chart: Downtime by Reason ===
 st.subheader("⏱ กราฟ Downtime แยกตามสาเหตุ")
 df_detail_grouped = df_detail.groupby(["log_date", "reason_name"], as_index=False)["duration_min"].sum()
 fig2 = px.bar(df_detail_grouped, x="log_date", y="duration_min", color="reason_name", barmode="stack")
