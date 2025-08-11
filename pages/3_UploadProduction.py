@@ -1,172 +1,167 @@
+
 import streamlit as st
 import pandas as pd
 import psycopg2
 import io
 from datetime import datetime
 
-# === Database Connection ===
-def get_connection():
-    return psycopg2.connect(st.secrets["postgres"]["conn_str"])
-
+# ============ Config ============
 st.set_page_config(page_title="Upload Production", layout="wide")
 st.title("📤 Upload Production Record")
 
-uploaded_file = st.file_uploader("📂 Upload Excel File (.xlsx)", type="xlsx")
+# ใช้ชื่อผู้ใช้งานจาก session ถ้ามี
+current_user = st.session_state.get("username", "")
 
-# ---- helper: ทำความสะอาดตัวเลขให้ปลอดภัยต่อ INTEGER ----
-INT32_MAX = 2_147_483_647
-def clean_int_series(s, default=0):
-    s = pd.to_numeric(s, errors="coerce").fillna(default)
-    # ตัดค่าให้อยู่ในช่วง int32
-    s = s.clip(lower=0, upper=INT32_MAX).astype("int64")
-    return s
+# ============ DB ============
+def get_connection():
+    return psycopg2.connect(st.secrets["postgres"]["conn_str"])
 
-if uploaded_file:
+# ============ Helper ============
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """ทำให้ชื่อคอลัมน์เป็นตัวพิมพ์เล็ก ตัดช่องว่างหน้า-หลัง"""
+    df = df.copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    return df
+
+def coerce_int(s):
+    """แปลงเป็น int ถ้าแปลงไม่ได้เป็น 0"""
+    return pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
+
+# ============ UI ============
+
+uploaded_file = st.file_uploader("📂 Upload Excel File (.xlsx)", type=["xlsx"])
+
+if not uploaded_file:
+    st.info("กรุณาอัปโหลดไฟล์ Excel ที่มีหัวคอลัมน์ เช่น log_date, shift, department, machine_name, part_no, plan_qty, actual_qty, defect_qty, remark, operator_name")
+    st.stop()
+
+try:
+    xls = pd.ExcelFile(uploaded_file)
+except Exception as e:
+    st.error(f"❌ ไม่สามารถอ่านไฟล์ Excel ได้: {e}")
+    st.stop()
+
+# โหลด Master
+with get_connection() as conn:
+    machine_df = pd.read_sql("SELECT id AS machine_id, machine_name FROM machine_list WHERE is_active = TRUE", conn)
+    part_df = pd.read_sql("SELECT id AS part_id, part_no FROM part_master WHERE is_active = TRUE", conn)
+
+all_rows = []
+
+for sheet in xls.sheet_names:
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        all_data = []
+        raw = pd.read_excel(xls, sheet_name=sheet)
+        df = normalize_columns(raw)
 
-        # โหลด master จาก DB และเปลี่ยนชื่อคอลัมน์ id ให้ไม่ชนกันตั้งแต่ต้น
-        with get_connection() as conn:
-            machine_df = pd.read_sql(
-                "SELECT id AS machine_id, machine_name FROM machine_list",
-                conn
-            )
-            part_df = pd.read_sql(
-                "SELECT id AS part_id, part_no FROM part_master",
-                conn
-            )
+        # หา index ของคอลัมน์ log_date เพื่อ "ตัดหัว" ซ้ายมือทิ้ง (กันไฟล์มีคอลัมน์โน้ตอยู่ก่อนหน้า)
+        if "log_date" in df.columns:
+            start_idx = df.columns.get_loc("log_date")
+            df = df.iloc[:, start_idx:]
+        else:
+            st.warning(f"❌ ชีท '{sheet}' ไม่พบคอลัมน์ 'log_date' ข้ามชีทนี้")
+            continue
 
-        for sheet in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet, dtype=str)  # อ่านเป็น string เพื่อลดปัญหาชนิดข้อมูล
-            # หา column เริ่มต้นจาก 'log_date'
-            if "log_date" not in df.columns:
-                st.warning(f"❌ ไม่พบคอลัมน์ 'log_date' ในชีท {sheet}")
-                continue
+        # เติมคอลัมน์ที่อาจไม่มีมาในไฟล์
+        for col in ["remark", "operator_name", "created_by"]:
+            if col not in df.columns:
+                df[col] = ""
 
-            # ให้แน่ใจว่าชื่อคอลัมน์มาตรฐานครบ
-            # ต้องมี: log_date, shift, department, machine_name, part_no, plan_qty, actual_qty, defect_qty, created_by, remark
-            needed = ["log_date", "shift", "department", "machine_name", "part_no",
-                      "plan_qty", "actual_qty", "defect_qty", "created_by", "remark"]
-            for c in needed:
-                if c not in df.columns:
-                    df[c] = None  # เติมคอลัมน์ที่หายไป
+        needed = ["log_date", "shift", "department", "machine_name", "part_no",
+                  "plan_qty", "actual_qty", "defect_qty", "remark", "operator_name", "created_by"]
 
-            # ตัดเหลือเฉพาะคอลัมน์ที่ต้องใช้
-            df = df[needed].copy()
+        # ถ้าไฟล์ไม่มีบางคอลัมน์ จำเป็น ให้แจ้งเตือน (ยกเว้น created_by, remark, operator_name ที่เติมว่างไว้แล้ว)
+        must_have = ["log_date", "shift", "department", "machine_name", "part_no"]
+        missing = [c for c in must_have if c not in df.columns]
+        if missing:
+            st.warning(f"⚠️ ชีท '{sheet}' ขาดคอลัมน์จำเป็น: {missing} ข้ามชีทนี้")
+            continue
 
-            # ทำความสะอาดเบื้องต้น
-            df["log_date"] = pd.to_datetime(df["log_date"], errors="coerce").dt.date
-            df["shift"] = df["shift"].fillna("").str.strip()
-            df["department"] = df["department"].fillna("").str.strip()
-            df["machine_name"] = df["machine_name"].fillna("").str.strip()
-            df["part_no"] = df["part_no"].fillna("").str.strip()
-            df["created_by"] = df["created_by"].fillna("").str.strip()
-            df["remark"] = df["remark"].fillna("").astype(str)
+        # จำกัดเฉพาะคอลัมน์ที่เราสนใจ (ถ้าบางคอลัมน์ไม่มีก็จะถูกเติมว่างไว้แล้ว)
+        df = df.reindex(columns=needed, fill_value="")
 
-            # กรอง record ที่ไม่มีวันที่/เครื่อง/part
-            df = df.dropna(subset=["log_date"])
-            df = df[df["machine_name"] != ""]
-            df = df[df["part_no"] != ""]
+        # ทำความสะอาดข้อมูล
+        df["log_date"] = pd.to_datetime(df["log_date"], errors="coerce").dt.date
+        df = df.dropna(subset=["log_date", "machine_name", "part_no"])
 
-            # map machine_id / part_id
-            df = df.merge(machine_df, how="left", on="machine_name")
-            df = df.merge(part_df, how="left", on="part_no")
+        # number columns
+        df["plan_qty"] = coerce_int(df["plan_qty"])
+        df["actual_qty"] = coerce_int(df["actual_qty"])
+        df["defect_qty"] = coerce_int(df["defect_qty"])
 
-            # แจ้งเตือนรายการที่หา id ไม่เจอ
-            miss_m = df[df["machine_id"].isna()]
-            miss_p = df[df["part_id"].isna()]
-            if not miss_m.empty:
-                st.warning(f"⚠️ ไม่พบเครื่องจักรในฐานข้อมูล: {sorted(miss_m['machine_name'].unique())}")
-            if not miss_p.empty:
-                st.warning(f"⚠️ ไม่พบ Part No. ในฐานข้อมูล: {sorted(miss_p['part_no'].unique())}")
+        # created_by ถ้าไม่ใส่ในไฟล์ให้ใช้ผู้ใช้ปัจจุบัน
+        df["created_by"] = df["created_by"].apply(lambda x: x if str(x).strip() != "" else current_user)
 
-            df = df.dropna(subset=["machine_id", "part_id"]).copy()
+        # เวลาอัปโหลด
+        df["created_at"] = datetime.now()
 
-            # แปลงคอลัมน์ตัวเลขอย่างปลอดภัย
-            df["plan_qty"] = clean_int_series(df["plan_qty"])
-            df["actual_qty"] = clean_int_series(df["actual_qty"])
-            df["defect_qty"] = clean_int_series(df["defect_qty"])
+        # map machine_id / part_id
+        df = df.merge(machine_df, how="left", on="machine_name")
+        df = df.merge(part_df, how="left", on="part_no")
 
-            # ตัวระบุเวลา
-            df["created_at"] = datetime.now()
+        # แจ้งรายการที่ไม่แมป
+        miss_m = df[df["machine_id"].isna()]
+        miss_p = df[df["part_id"].isna()]
+        if not miss_m.empty:
+            st.warning(f"⚠️ ชีท '{sheet}' พบเครื่องจักรไม่ตรงกับ master: {sorted(miss_m['machine_name'].dropna().unique().tolist())}")
+        if not miss_p.empty:
+            st.warning(f"⚠️ ชีท '{sheet}' พบ Part No. ไม่ตรงกับ master: {sorted(miss_p['part_no'].dropna().unique().tolist())}")
 
-            all_data.append(df)
+        # เก็บเฉพาะแถวที่แมปได้
+        df_ok = df.dropna(subset=["machine_id", "part_id"]).copy()
 
-        if not all_data:
-            st.info("ไม่มีข้อมูลที่พร้อมอัปโหลด")
-            st.stop()
-
-        df_upload = pd.concat(all_data, ignore_index=True)
-
-        # แสดงตัวอย่างข้อมูลก่อนอัปโหลด
-        st.subheader("ตัวอย่างข้อมูลที่จะอัปโหลด")
-        st.dataframe(df_upload.head(100), use_container_width=True)
-
-        # ปุ่มอัปโหลด
-        if st.button("📥 Upload to Database"):
-            # เตรียมชุดข้อมูลสำหรับ insert
-            rows = []
-            for _, r in df_upload.iterrows():
-                rows.append((
-                    r["log_date"],             # DATE
-                    r["shift"],                # TEXT
-                    r["department"],           # TEXT
-                    int(r["machine_id"]),      # INTEGER
-                    int(r["part_id"]),         # INTEGER
-                    int(r["plan_qty"]),        # INTEGER
-                    int(r["actual_qty"]),      # INTEGER
-                    int(r["defect_qty"]),      # INTEGER
-                    r["created_by"],           # TEXT
-                    r["created_at"],           # TIMESTAMP
-                    r["remark"]                # TEXT
-                ))
-
-            try:
-                with get_connection() as conn:
-                    cur = conn.cursor()
-                    cur.executemany(
-                        """
-                        INSERT INTO production_log
-                        (log_date, shift, department, machine_id, part_id,
-                         plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
-                        VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        rows
-                    )
-                    conn.commit()
-                st.success(f"✅ Upload เสร็จสมบูรณ์ ({len(rows)} แถว)")
-            except Exception as e:
-                # จับข้อผิดพลาดแล้วไล่หาแถวที่พัง
-                st.error(f"❌ เกิดข้อผิดพลาดขณะบันทึก: {e}")
-                st.info("กำลังตรวจสอบแถวที่อาจทำให้เกิดปัญหา...")
-                bad = []
-                with get_connection() as conn:
-                    cur = conn.cursor()
-                    for i, vals in enumerate(rows, start=1):
-                        try:
-                            cur.execute(
-                                """
-                                INSERT INTO production_log
-                                (log_date, shift, department, machine_id, part_id,
-                                 plan_qty, actual_qty, defect_qty, created_by, created_at, remark)
-                                VALUES
-                                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                """,
-                                vals
-                            )
-                        except Exception as e2:
-                            bad.append((i, vals, str(e2)))
-                            conn.rollback()
-                        else:
-                            conn.rollback()  # dry-run เพื่อตรวจสอบเท่านั้น
-                if bad:
-                    st.error(f"พบบรรทัดที่มีปัญหา {len(bad)} แถว (แสดง 5 แถวแรก):")
-                    for i, vals, msg in bad[:5]:
-                        st.write(f"แถวที่ {i}: {vals} -> {msg}")
+        all_rows.append(df_ok)
 
     except Exception as e:
-        st.error(f"❌ ไม่สามารถอ่านไฟล์ Excel ได้: {e}")
-else:
-    st.info("กรุณาอัปโหลดไฟล์ Excel ที่มีคอลัมน์: log_date, shift, department, machine_name, part_no, plan_qty, actual_qty, defect_qty, created_by, remark")
+        st.error(f"❌ อ่านชีท '{sheet}' ล้มเหลว: {e}")
+
+if not all_rows:
+    st.stop()
+
+df_upload = pd.concat(all_rows, ignore_index=True)
+
+st.subheader("👀 ตัวอย่างข้อมูลที่จะบันทึก")
+preview_cols = [
+    "log_date", "shift", "department", "machine_name", "part_no",
+    "plan_qty", "actual_qty", "defect_qty", "operator_name", "remark", "created_by"
+]
+st.dataframe(df_upload[preview_cols], use_container_width=True)
+
+# ปุ่ม Export Preview (optional)
+buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    df_upload.to_excel(writer, index=False, sheet_name="upload_preview")
+st.download_button("📥 ดาวน์โหลดตัวอย่าง (Excel)",
+                   data=buffer.getvalue(),
+                   file_name="upload_preview.xlsx",
+                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+st.markdown("---")
+if st.button("📥 Upload to Database", type="primary"):
+    try:
+        insert_sql = """
+            INSERT INTO production_log (
+                log_date, shift, department, machine_id, part_id,
+                plan_qty, actual_qty, defect_qty,
+                created_by, created_at, remark, operator_name
+            ) VALUES (
+                %(log_date)s, %(shift)s, %(department)s, %(machine_id)s, %(part_id)s,
+                %(plan_qty)s, %(actual_qty)s, %(defect_qty)s,
+                %(created_by)s, %(created_at)s, %(remark)s, %(operator_name)s
+            )
+        """
+
+        records = df_upload[[
+            "log_date", "shift", "department", "machine_id", "part_id",
+            "plan_qty", "actual_qty", "defect_qty", "created_by", "created_at",
+            "remark", "operator_name"
+        ]].to_dict(orient="records")
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(insert_sql, records)
+            conn.commit()
+
+        st.success(f"✅ อัปโหลดสำเร็จ {len(records)} แถว")
+
+    except Exception as e:
+        st.error(f"❌ เกิดข้อผิดพลาดขณะบันทึก: {e}")
