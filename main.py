@@ -11,7 +11,7 @@ import requests
 # -------------------------------
 st.set_page_config(page_title="Factory Log System", page_icon="🏭", layout="wide")
 
-# Connect to Supabase Postgres (via Pooler)
+# Connect to Supabase Postgres (ผ่าน Pooler)
 conn_str = st.secrets["postgres"]["conn_str"]
 engine = create_engine(conn_str)
 
@@ -20,6 +20,7 @@ TELEGRAM_TOKEN = st.secrets["telegram"]["token"]
 TELEGRAM_CHAT_ID = st.secrets["telegram"]["chat_id"]
 
 def send_telegram(msg: str):
+    """ส่งข้อความไปยัง Telegram"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
@@ -28,38 +29,15 @@ def send_telegram(msg: str):
         st.warning(f"ไม่สามารถส่ง Telegram: {e}")
 
 # -------------------------------
-# Downtime Master
+# Downtime Master (Main + Sub Category)
 # -------------------------------
 downtime_structure = {
-    "MC Downtime": {
-        "D1": "Breakdown - Major",
-        "D2": "Breakdown - Minor",
-        "D3": "Utility Issue",
-    },
-    "Quality Problem": {
-        "Q1": "In-process Defect",
-        "Q2": "QA Problem",
-        "Q3": "Other Quality Problem",
-    },
-    "Setup and Adjustment": {
-        "S1": "Tool Change",
-        "S2": "Model Change",
-        "S3": "Adjustment / Trial run",
-    },
-    "Management Downtime (PM Plan)": {
-        "M1": "Planned Maintenance",
-        "M2": "Waiting for Plan",
-    },
-    "Technical Downtime": {
-        "T1": "Process Instability",
-        "T2": "Tool/Die Problem",
-        "T3": "Waiting Tool",
-    },
-    "Other": {
-        "O1": "Material Shortage",
-        "O2": "Waiting / Box",
-        "O3": "Man Issue",
-    }
+    "MC Downtime": {"D1": "Breakdown - Major", "D2": "Breakdown - Minor", "D3": "Utility Issue"},
+    "Quality Problem": {"Q1": "In-process Defect", "Q2": "QA Problem", "Q3": "Other Quality Problem"},
+    "Setup and Adjustment": {"S1": "Tool Change", "S2": "Model Change", "S3": "Adjustment / Trial run"},
+    "Management Downtime (PM Plan)": {"M1": "Planned Maintenance", "M2": "Waiting for Plan"},
+    "Technical Downtime": {"T1": "Process Instability", "T2": "Tool/Die Problem", "T3": "Waiting Tool"},
+    "Other": {"O1": "Material Shortage", "O2": "Waiting / Box", "O3": "Man Issue"},
 }
 
 # -------------------------------
@@ -76,6 +54,7 @@ if menu == "Production Record":
     with st.form("prod_form", clear_on_submit=True):
         log_date = st.date_input("📅 วันที่บันทึก", value=date.today())
         shift = st.selectbox("🕒 กะการทำงาน", ["เช้า", "บ่าย", "ดึก"])
+        department = st.selectbox("🏭 แผนก", ["FM", "TP", "FI"])
         machine_name = st.text_input("⚙️ เครื่องจักร")
         part_no = st.text_input("🔩 Part No.")
         output_qty = st.number_input("✅ จำนวนผลิต (ชิ้น)", min_value=0, step=1)
@@ -89,11 +68,12 @@ if menu == "Production Record":
                 with engine.begin() as conn:
                     conn.execute(text("""
                         insert into production_log 
-                        (log_date, shift, machine_name, part_no, output_qty, ng_qty, downtime_min, operator) 
-                        values (:log_date, :shift, :machine_name, :part_no, :output_qty, :ng_qty, :downtime_min, :operator)
+                        (log_date, shift, department, machine_name, part_no, output_qty, ng_qty, downtime_min, operator) 
+                        values (:log_date, :shift, :department, :machine_name, :part_no, :output_qty, :ng_qty, :downtime_min, :operator)
                     """), {
                         "log_date": log_date,
                         "shift": shift,
+                        "department": department,
                         "machine_name": machine_name,
                         "part_no": part_no,
                         "output_qty": int(output_qty),
@@ -103,16 +83,26 @@ if menu == "Production Record":
                     })
                 st.success("✅ บันทึก Production สำเร็จ")
 
-                send_telegram(f"📑 Production Record\nDate: {log_date}\nShift: {shift}\nMachine: {machine_name}\nPart: {part_no}\nOutput: {output_qty}\nNG: {ng_qty}\nDowntime: {downtime_min} min\nBy: {operator}")
-
+                send_telegram(
+                    f"📑 Production Record\n"
+                    f"Date: {log_date}\nShift: {shift}\nDept: {department}\nMachine: {machine_name}\nPart: {part_no}\n"
+                    f"Output: {output_qty}\nNG: {ng_qty}\nDowntime: {downtime_min} min\nBy: {operator}"
+                )
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # Show history
+    # Show history + Delete
     st.subheader("📋 รายการ Production ล่าสุด")
     try:
-        df = pd.read_sql("select * from production_log order by created_at desc limit 10", engine)
+        df = pd.read_sql("select * from production_log order by created_at desc limit 20", engine)
         st.dataframe(df, use_container_width=True)
+
+        with st.expander("🗑 ลบข้อมูล Production"):
+            del_date = st.date_input("เลือกวันที่ที่จะลบ", value=date.today(), key="del_prod")
+            if st.button("❌ ลบข้อมูล Production วันที่นี้"):
+                with engine.begin() as conn:
+                    conn.execute(text("delete from production_log where log_date = :d"), {"d": del_date})
+                st.warning(f"ลบข้อมูล Production วันที่ {del_date} เรียบร้อย")
     except Exception as e:
         st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
 
@@ -159,15 +149,26 @@ elif menu == "Downtime Record":
                     })
                 st.success("✅ บันทึก Downtime สำเร็จ")
 
-                send_telegram(f"⏱️ Downtime Record\nDate: {log_date}\nShift: {shift}\nDept: {department}\nMachine: {machine_name}\nCategory: {main_category}\nCode: {loss_code} - {sub_category}\nDowntime: {downtime_min} min\nBy: {operator}")
-
+                send_telegram(
+                    f"⏱️ Downtime Record\n"
+                    f"Date: {log_date}\nShift: {shift}\nDept: {department}\nMachine: {machine_name}\n"
+                    f"Category: {main_category}\nCode: {loss_code} - {sub_category}\n"
+                    f"Downtime: {downtime_min} min\nBy: {operator}"
+                )
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # Show history
+    # Show history + Delete
     st.subheader("📋 รายการ Downtime ล่าสุด")
     try:
-        df = pd.read_sql("select * from downtime_log order by created_at desc limit 10", engine)
+        df = pd.read_sql("select * from downtime_log order by created_at desc limit 20", engine)
         st.dataframe(df, use_container_width=True)
+
+        with st.expander("🗑 ลบข้อมูล Downtime"):
+            del_date = st.date_input("เลือกวันที่ที่จะลบ", value=date.today(), key="del_dt")
+            if st.button("❌ ลบข้อมูล Downtime วันที่นี้"):
+                with engine.begin() as conn:
+                    conn.execute(text("delete from downtime_log where log_date = :d"), {"d": del_date})
+                st.warning(f"ลบข้อมูล Downtime วันที่ {del_date} เรียบร้อย")
     except Exception as e:
         st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
