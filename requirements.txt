@@ -1,4 +1,5 @@
-streamlit
+streamlit==1.38.0
+supabase==2.4.6
 pandas
 psycopg2-binary
 openpyxl
@@ -15,4 +16,5 @@ plotly
 SQLAlchemy
 python-dotenv
 streamlit-aggrid==0.3.3
+
 
