@@ -1,22 +1,31 @@
 # app.py
 
 import streamlit as st
-from supabase import create_client
+from sqlalchemy import create_engine, text
+import pandas as pd
 from datetime import date
+import requests
 
 # -------------------------------
 # CONFIG
 # -------------------------------
 st.set_page_config(page_title="Factory Log System", page_icon="🏭", layout="wide")
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+# Connect to Supabase Postgres (via Pooler)
+conn_str = st.secrets["postgres"]["conn_str"]
+engine = create_engine(conn_str)
 
-@st.cache_resource
-def init_connection():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+# Telegram
+TELEGRAM_TOKEN = st.secrets["telegram"]["token"]
+TELEGRAM_CHAT_ID = st.secrets["telegram"]["chat_id"]
 
-supabase = init_connection()
+def send_telegram(msg: str):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+        requests.post(url, data=payload, timeout=5)
+    except Exception as e:
+        st.warning(f"ไม่สามารถส่ง Telegram: {e}")
 
 # -------------------------------
 # Downtime Master
@@ -76,26 +85,36 @@ if menu == "Production Record":
 
         submitted = st.form_submit_button("✅ บันทึก")
         if submitted:
-            data = {
-                "log_date": log_date.isoformat(),
-                "shift": shift,
-                "machine_name": machine_name,
-                "part_no": part_no,
-                "output_qty": int(output_qty),
-                "ng_qty": int(ng_qty),
-                "downtime_min": int(downtime_min),
-                "operator": operator,
-            }
-            res = supabase.table("production_log").insert(data).execute()
-            st.success("✅ บันทึก Production สำเร็จ") if res.data else st.error("❌ Error")
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        insert into production_log 
+                        (log_date, shift, machine_name, part_no, output_qty, ng_qty, downtime_min, operator) 
+                        values (:log_date, :shift, :machine_name, :part_no, :output_qty, :ng_qty, :downtime_min, :operator)
+                    """), {
+                        "log_date": log_date,
+                        "shift": shift,
+                        "machine_name": machine_name,
+                        "part_no": part_no,
+                        "output_qty": int(output_qty),
+                        "ng_qty": int(ng_qty),
+                        "downtime_min": int(downtime_min),
+                        "operator": operator
+                    })
+                st.success("✅ บันทึก Production สำเร็จ")
+
+                send_telegram(f"📑 Production Record\nDate: {log_date}\nShift: {shift}\nMachine: {machine_name}\nPart: {part_no}\nOutput: {output_qty}\nNG: {ng_qty}\nDowntime: {downtime_min} min\nBy: {operator}")
+
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
     # Show history
     st.subheader("📋 รายการ Production ล่าสุด")
-    logs = supabase.table("production_log").select("*").order("created_at", desc=True).limit(10).execute()
-    if logs.data:
-        st.dataframe(logs.data, use_container_width=True)
-    else:
-        st.info("ℹ️ ยังไม่มีข้อมูล Production")
+    try:
+        df = pd.read_sql("select * from production_log order by created_at desc limit 10", engine)
+        st.dataframe(df, use_container_width=True)
+    except Exception as e:
+        st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
 
 # -------------------------------
 # Downtime Record
@@ -120,25 +139,35 @@ elif menu == "Downtime Record":
 
         submitted = st.form_submit_button("✅ บันทึก")
         if submitted:
-            data = {
-                "log_date": log_date.isoformat(),
-                "shift": shift,
-                "department": department,
-                "machine_name": machine_name,
-                "main_category": main_category,
-                "sub_category": sub_category,
-                "loss_code": loss_code,
-                "downtime_min": int(downtime_min),
-                "operator": operator,
-                "remark": remark,
-            }
-            res = supabase.table("downtime_log").insert(data).execute()
-            st.success("✅ บันทึก Downtime สำเร็จ") if res.data else st.error("❌ Error")
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        insert into downtime_log 
+                        (log_date, shift, department, machine_name, main_category, sub_category, loss_code, downtime_min, operator, remark) 
+                        values (:log_date, :shift, :department, :machine_name, :main_category, :sub_category, :loss_code, :downtime_min, :operator, :remark)
+                    """), {
+                        "log_date": log_date,
+                        "shift": shift,
+                        "department": department,
+                        "machine_name": machine_name,
+                        "main_category": main_category,
+                        "sub_category": sub_category,
+                        "loss_code": loss_code,
+                        "downtime_min": int(downtime_min),
+                        "operator": operator,
+                        "remark": remark
+                    })
+                st.success("✅ บันทึก Downtime สำเร็จ")
+
+                send_telegram(f"⏱️ Downtime Record\nDate: {log_date}\nShift: {shift}\nDept: {department}\nMachine: {machine_name}\nCategory: {main_category}\nCode: {loss_code} - {sub_category}\nDowntime: {downtime_min} min\nBy: {operator}")
+
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
     # Show history
     st.subheader("📋 รายการ Downtime ล่าสุด")
-    logs = supabase.table("downtime_log").select("*").order("created_at", desc=True).limit(10).execute()
-    if logs.data:
-        st.dataframe(logs.data, use_container_width=True)
-    else:
-        st.info("ℹ️ ยังไม่มีข้อมูล Downtime")
+    try:
+        df = pd.read_sql("select * from downtime_log order by created_at desc limit 10", engine)
+        st.dataframe(df, use_container_width=True)
+    except Exception as e:
+        st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
