@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 import pandas as pd
 from datetime import date
 import requests
+import plotly.express as px
 
 # -------------------------------
 # CONFIG
@@ -43,7 +44,7 @@ downtime_structure = {
 # -------------------------------
 # Sidebar Menu
 # -------------------------------
-menu = st.sidebar.radio("📌 เลือกเมนู", ["Production Record", "Downtime Record"])
+menu = st.sidebar.radio("📌 เลือกเมนู", ["Production Record", "Downtime Record", "Dashboard"])
 
 # -------------------------------
 # Production Record
@@ -172,3 +173,75 @@ elif menu == "Downtime Record":
                 st.warning(f"ลบข้อมูล Downtime วันที่ {del_date} เรียบร้อย")
     except Exception as e:
         st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
+
+# -------------------------------
+# Dashboard
+# -------------------------------
+elif menu == "Dashboard":
+    st.title("📊 Dashboard – Efficiency & Loss")
+
+    try:
+        df_prod = pd.read_sql("select * from production_log", engine)
+        df_dt = pd.read_sql("select * from downtime_log", engine)
+
+        # Filter section
+        st.sidebar.subheader("🔎 ตัวกรอง Dashboard")
+        start_date = st.sidebar.date_input("วันที่เริ่มต้น", df_prod["log_date"].min() if not df_prod.empty else date.today())
+        end_date = st.sidebar.date_input("วันที่สิ้นสุด", df_prod["log_date"].max() if not df_prod.empty else date.today())
+        dept_filter = st.sidebar.multiselect("เลือกแผนก", ["FM", "TP", "FI"], default=["FM","TP","FI"])
+        machine_filter = st.sidebar.multiselect("เลือกเครื่องจักร", df_prod["machine_name"].unique() if not df_prod.empty else [])
+
+        # Apply filter
+        if not df_prod.empty:
+            df_prod = df_prod[
+                (df_prod["log_date"] >= pd.to_datetime(start_date)) &
+                (df_prod["log_date"] <= pd.to_datetime(end_date)) &
+                (df_prod["department"].isin(dept_filter))
+            ]
+            if machine_filter:
+                df_prod = df_prod[df_prod["machine_name"].isin(machine_filter)]
+
+        if not df_dt.empty:
+            df_dt = df_dt[
+                (df_dt["log_date"] >= pd.to_datetime(start_date)) &
+                (df_dt["log_date"] <= pd.to_datetime(end_date)) &
+                (df_dt["department"].isin(dept_filter))
+            ]
+            if machine_filter:
+                df_dt = df_dt[df_dt["machine_name"].isin(machine_filter)]
+
+        # Efficiency Chart
+        if not df_prod.empty:
+            df_prod["ok_qty"] = df_prod["output_qty"] - df_prod["ng_qty"]
+            df_eff = df_prod.groupby("log_date").agg(
+                {"output_qty": "sum", "ng_qty": "sum", "ok_qty": "sum"}
+            ).reset_index()
+            df_eff["efficiency"] = (df_eff["ok_qty"] / df_eff["output_qty"]) * 100
+
+            st.subheader("📈 ประสิทธิภาพการผลิต (Efficiency)")
+            fig = px.line(df_eff, x="log_date", y="efficiency", markers=True,
+                          title="Efficiency % ต่อวัน")
+            fig.update_layout(yaxis_title="Efficiency (%)")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("ℹ️ ยังไม่มีข้อมูล Production")
+
+        # Downtime Loss Chart
+        if not df_dt.empty:
+            st.subheader("⏱️ Breakdown of Downtime Loss")
+            df_loss = df_dt.groupby("main_category").agg({"downtime_min": "sum"}).reset_index()
+            fig2 = px.pie(df_loss, names="main_category", values="downtime_min",
+                          title="Downtime Breakdown by Category")
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.info("ℹ️ ยังไม่มีข้อมูล Downtime")
+
+        # Export data
+        st.subheader("📤 Export Data")
+        if not df_prod.empty:
+            st.download_button("⬇️ Download Production CSV", df_prod.to_csv(index=False), "production.csv", "text/csv")
+        if not df_dt.empty:
+            st.download_button("⬇️ Download Downtime CSV", df_dt.to_csv(index=False), "downtime.csv", "text/csv")
+
+    except Exception as e:
+        st.error(f"โหลดข้อมูลไม่สำเร็จ: {e}")
