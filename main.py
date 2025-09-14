@@ -1,7 +1,7 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 
 # -------------------------------
 # CONFIG
@@ -61,7 +61,7 @@ df_problem = load_master("problem_master")
 # -------------------------------
 # UI Form
 # -------------------------------
-st.title("📑 Production Record (with Multiple Downtime)")
+st.title("📑 Production Record (with WOC, Time, Speed)")
 
 if "downtimes" not in st.session_state:
     st.session_state.downtimes = []
@@ -83,6 +83,23 @@ with st.form("record_form", clear_on_submit=True):
     # ✅ Part No
     part_no = st.selectbox("🔩 Part No.", df_part["part_no"].unique() if not df_part.empty else [])
 
+    # ✅ WOC Number
+    woc_number = st.text_input("📄 หมายเลข WOC")
+
+    # ✅ Start & End Time
+    start_time = st.time_input("⏱️ เวลาเริ่ม")
+    end_time = st.time_input("⏱️ เวลาจบ")
+
+    # คำนวณ work_minutes
+    work_minutes = None
+    if start_time and end_time:
+        start_dt = datetime.combine(date.today(), start_time)
+        end_dt = datetime.combine(date.today(), end_time)
+        work_minutes = int((end_dt - start_dt).total_seconds() // 60)
+        if work_minutes < 0:
+            work_minutes = None
+            st.warning("⚠️ เวลาจบต้องมากกว่าเวลาเริ่ม")
+
     # ✅ Output Qty
     ok_qty = st.number_input("✔️ จำนวน OK", min_value=0, step=1)
     ng_qty = st.number_input("❌ จำนวน NG", min_value=0, step=1)
@@ -90,6 +107,11 @@ with st.form("record_form", clear_on_submit=True):
     untest_qty = 0
     if operator_dept == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
+
+    # ✅ Speed (เฉพาะ TP, FI)
+    speed = None
+    if operator_dept in ["TP", "FI"]:
+        speed = st.number_input("⚡ Machine Speed (pcs/min)", min_value=0, step=1)
 
     # ✅ Problem 4M
     problem_4m = st.selectbox("⚠️ สาเหตุปัญหา (4M)", df_problem["problem"].unique() if not df_problem.empty else ["Man","Machine","Material","Method","Other"])
@@ -121,50 +143,62 @@ with st.form("record_form", clear_on_submit=True):
     # ===============================
     submitted = st.form_submit_button("✅ บันทึกข้อมูล")
     if submitted:
-        try:
-            with engine.begin() as conn:
-                # insert production record
-                result = conn.execute(text("""
-                    insert into production_record
-                    (log_date, shift, department, machine_name, part_no, ok_qty, ng_qty, untest_qty,
-                    problem_4m, problem_remark, emp_code, operator)
-                    values (:log_date, :shift, :department, :machine_name, :part_no, :ok_qty, :ng_qty, :untest_qty,
-                    :problem_4m, :problem_remark, :emp_code, :operator)
-                    returning id
-                """), {
-                    "log_date": log_date,
-                    "shift": shift,
-                    "department": operator_dept,
-                    "machine_name": machine_name,
-                    "part_no": part_no,
-                    "ok_qty": int(ok_qty),
-                    "ng_qty": int(ng_qty),
-                    "untest_qty": int(untest_qty),
-                    "problem_4m": problem_4m,
-                    "problem_remark": problem_remark,
-                    "emp_code": operator_code,
-                    "operator": operator
-                })
-                prod_id = result.scalar_one()
-
-                # insert downtime logs
-                for dt in st.session_state.downtimes:
-                    conn.execute(text("""
-                        insert into downtime_log (production_id, main_category, loss_code, sub_category, downtime_min)
-                        values (:pid, :main, 
-                               (select loss_code from downtime_master where sub_category=:sub limit 1), 
-                               :sub, :minutes)
+        if work_minutes is None:
+            st.error("❌ โปรดตรวจสอบเวลาเริ่ม/เวลาจบ")
+        else:
+            try:
+                with engine.begin() as conn:
+                    # insert production record
+                    result = conn.execute(text("""
+                        insert into production_record
+                        (log_date, shift, department, machine_name, part_no, woc_number,
+                        start_time, end_time, work_minutes,
+                        ok_qty, ng_qty, untest_qty, speed,
+                        problem_4m, problem_remark, emp_code, operator)
+                        values (:log_date, :shift, :department, :machine_name, :part_no, :woc_number,
+                        :start_time, :end_time, :work_minutes,
+                        :ok_qty, :ng_qty, :untest_qty, :speed,
+                        :problem_4m, :problem_remark, :emp_code, :operator)
+                        returning id
                     """), {
-                        "pid": prod_id,
-                        "main": dt["main"],
-                        "sub": dt["sub"],
-                        "minutes": int(dt["minutes"])
+                        "log_date": log_date,
+                        "shift": shift,
+                        "department": operator_dept,
+                        "machine_name": machine_name,
+                        "part_no": part_no,
+                        "woc_number": woc_number,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "work_minutes": work_minutes,
+                        "ok_qty": int(ok_qty),
+                        "ng_qty": int(ng_qty),
+                        "untest_qty": int(untest_qty),
+                        "speed": speed,
+                        "problem_4m": problem_4m,
+                        "problem_remark": problem_remark,
+                        "emp_code": operator_code,
+                        "operator": operator
                     })
+                    prod_id = result.scalar_one()
 
-            st.success("✅ บันทึกเรียบร้อยแล้ว")
-            st.session_state.downtimes = []  # reset หลังบันทึก
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+                    # insert downtime logs
+                    for dt in st.session_state.downtimes:
+                        conn.execute(text("""
+                            insert into downtime_log (production_id, main_category, loss_code, sub_category, downtime_min)
+                            values (:pid, :main, 
+                                   (select loss_code from downtime_master where sub_category=:sub limit 1), 
+                                   :sub, :minutes)
+                        """), {
+                            "pid": prod_id,
+                            "main": dt["main"],
+                            "sub": dt["sub"],
+                            "minutes": int(dt["minutes"])
+                        })
+
+                st.success("✅ บันทึกเรียบร้อยแล้ว")
+                st.session_state.downtimes = []  # reset หลังบันทึก
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
 # -------------------------------
 # Show latest record
@@ -173,7 +207,9 @@ st.subheader("📋 ข้อมูลล่าสุด")
 try:
     df = pd.read_sql("""
         select pr.id, pr.log_date, pr.shift, pr.department, pr.machine_name, pr.part_no,
-               pr.ok_qty, pr.ng_qty, pr.untest_qty, pr.output_qty, pr.operator,
+               pr.woc_number, pr.start_time, pr.end_time, pr.work_minutes,
+               pr.ok_qty, pr.ng_qty, pr.untest_qty, pr.output_qty, pr.speed,
+               pr.operator,
                dt.main_category, dt.sub_category, dt.downtime_min
         from production_record pr
         left join downtime_log dt on pr.id = dt.production_id
