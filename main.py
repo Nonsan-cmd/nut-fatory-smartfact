@@ -71,24 +71,39 @@ with st.form("record_form", clear_on_submit=True):
     log_date = st.date_input("📅 วันทำงาน", value=date.today())
     shift = st.selectbox("🕒 กะ", ["เช้า", "โอทีเช้า", "ดึก", "โอทีกะดึก"])
 
-    department = st.selectbox("🏭 แผนก", df_dept["department_name"].unique() if not df_dept.empty else ["FM","TP","FI"])
-    machine_name = st.selectbox("⚙️ เครื่องจักร", df_machine[df_machine["department"]==department]["machine_name"].unique() if not df_machine.empty else [])
+    # ✅ Department
+    dept_selected = st.selectbox(
+        "🏭 แผนก",
+        df_dept["department_name"].unique() if not df_dept.empty else ["FM", "TP", "FI"]
+    )
+    dept_selected = str(dept_selected).strip()
+
+    # ✅ Machine ตาม Department
+    machine_options = (
+        df_machine[df_machine["department"].str.strip() == dept_selected]["machine_name"].unique()
+        if not df_machine.empty else []
+    )
+    machine_name = st.selectbox("⚙️ เครื่องจักร", machine_options)
+
+    # ✅ Part No
     part_no = st.selectbox("🔩 Part No.", df_part["part_no"].unique() if not df_part.empty else [])
 
+    # ✅ Output Qty
     ok_qty = st.number_input("✔️ จำนวน OK", min_value=0, step=1)
     ng_qty = st.number_input("❌ จำนวน NG", min_value=0, step=1)
 
     untest_qty = 0
-    if department == "FI":
+    if dept_selected == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
 
+    # ✅ Problem 4M
     problem_4m = st.selectbox("⚠️ สาเหตุปัญหา (4M)", df_problem["problem"].unique() if not df_problem.empty else ["Man","Machine","Material","Method","Other"])
     problem_remark = ""
     if problem_4m == "Other":
         problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม")
 
     # ===============================
-    # Downtime Section
+    # Downtime Section (หลายรายการ)
     # ===============================
     st.subheader("⏱️ รายการ Downtime")
 
@@ -124,7 +139,7 @@ with st.form("record_form", clear_on_submit=True):
                 """), {
                     "log_date": log_date,
                     "shift": shift,
-                    "department": department,
+                    "department": dept_selected,
                     "machine_name": machine_name,
                     "part_no": part_no,
                     "ok_qty": int(ok_qty),
