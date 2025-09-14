@@ -2,8 +2,10 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
 from datetime import date
-import requests
 
+# -------------------------------
+# CONFIG
+# -------------------------------
 st.set_page_config(page_title="Production Record", page_icon="🏭", layout="wide")
 
 # Connect Supabase
@@ -11,24 +13,36 @@ conn_str = st.secrets["postgres"]["conn_str"]
 engine = create_engine(conn_str)
 
 # -------------------------------
-# Login System (ง่าย ๆ)
+# Login System
 # -------------------------------
 if "user" not in st.session_state:
     with st.form("login"):
-        st.write("🔐 Login")
-        user = st.text_input("Username")
-        pw = st.text_input("Password", type="password")
+        st.write("🔐 Login เข้าสู่ระบบ")
+        emp_code = st.text_input("รหัสพนักงาน")
+        pw = st.text_input("รหัสผ่าน", type="password")
         submitted = st.form_submit_button("Login")
         if submitted:
-            # TODO: ตรวจสอบจากตาราง user_roles
-            if user and pw:
-                st.session_state.user = user
-                st.success(f"ยินดีต้อนรับ {user}")
-            else:
-                st.error("❌ Username / Password ไม่ถูกต้อง")
+            try:
+                query = text("select * from user_roles where emp_code = :emp and password = :pw")
+                with engine.begin() as conn:
+                    user = conn.execute(query, {"emp": emp_code, "pw": pw}).fetchone()
+                if user:
+                    st.session_state.user = dict(user._mapping)
+                    st.success(f"ยินดีต้อนรับ {user.emp_name} ({user.role})")
+                else:
+                    st.error("❌ รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
     st.stop()
 
-operator = st.session_state.user
+# ข้อมูลผู้ใช้
+user = st.session_state.user
+operator = user["emp_name"]
+operator_code = user["emp_code"]
+operator_role = user["role"]
+operator_dept = user["department"]
+
+st.sidebar.success(f"👷 {operator} ({operator_role})")
 
 # -------------------------------
 # โหลด Master Data
@@ -81,9 +95,11 @@ with st.form("record_form", clear_on_submit=True):
                 conn.execute(text("""
                     insert into production_record 
                     (log_date, shift, department, machine_name, part_no, ok_qty, ng_qty, untest_qty,
-                    main_category, sub_category, downtime_min, problem_4m, problem_remark, operator)
+                    main_category, sub_category, downtime_min, problem_4m, problem_remark,
+                    emp_code, operator)
                     values (:log_date, :shift, :department, :machine_name, :part_no, :ok_qty, :ng_qty, :untest_qty,
-                    :main_category, :sub_category, :downtime_min, :problem_4m, :problem_remark, :operator)
+                    :main_category, :sub_category, :downtime_min, :problem_4m, :problem_remark,
+                    :emp_code, :operator)
                 """), {
                     "log_date": log_date,
                     "shift": shift,
@@ -98,6 +114,7 @@ with st.form("record_form", clear_on_submit=True):
                     "downtime_min": int(downtime_min),
                     "problem_4m": problem_4m,
                     "problem_remark": problem_remark,
+                    "emp_code": operator_code,
                     "operator": operator
                 })
             st.success("✅ บันทึกเรียบร้อยแล้ว")
