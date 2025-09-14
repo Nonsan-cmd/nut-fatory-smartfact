@@ -115,9 +115,11 @@ if mode == "📑 Production Record":
         # -------------------------------
         st.subheader("⚠️ สาเหตุปัญหา (4M)")
         main_4m = st.selectbox("เลือก 4M", ["ไม่มีปัญหา", "Man", "Machine", "Material", "Method"])
+
         problem_selected, action_selected = None, None
         if main_4m != "ไม่มีปัญหา":
-            problems = df_problem[(df_problem["department"] == operator_dept) & (df_problem["main_4m"] == main_4m)]["problem"].unique()
+            problems = df_problem[(df_problem["department"] == operator_dept) &
+                                  (df_problem["main_4m"] == main_4m)]["problem"].unique()
             problem_selected = st.selectbox("📌 เลือกปัญหา", list(problems) + ["อื่น ๆ"])
             if problem_selected == "อื่น ๆ":
                 problem_selected = st.text_input("📝 ระบุปัญหาเพิ่มเติม")
