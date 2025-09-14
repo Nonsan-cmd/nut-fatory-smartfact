@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
-from datetime import date, time, datetime
+from datetime import date, time
 
 # -------------------------------
 # CONFIG
@@ -33,6 +33,7 @@ if "user" not in st.session_state:
     st.stop()
 
 user = st.session_state.user
+operator_dept = user["department"]
 st.sidebar.success(f"👷 {user['emp_name']} ({user['role']})")
 
 # -------------------------------
@@ -62,7 +63,7 @@ if mode == "Production Record":
     with st.form("record_form", clear_on_submit=True):
         log_date = st.date_input("📅 วันทำงาน", value=date.today())
         shift = st.selectbox("🕒 กะ", ["เช้า", "โอทีเช้า", "ดึก", "โอทีกะดึก"])
-        department = user["department"]
+        department = operator_dept
 
         machine_name = st.selectbox(
             "⚙️ เครื่องจักร",
@@ -93,44 +94,46 @@ if mode == "Production Record":
         if department in ["TP", "FI"]:
             speed = st.number_input("⚡ Machine Speed (pcs/min)", min_value=0, step=1)
 
+        # -------------------------------
+        # 4M Problem Section
+        # -------------------------------
         st.subheader("⚠️ สาเหตุปัญหา (4M)")
-        main_4m = st.selectbox("เลือก 4M", ["ไม่มีปัญหา", "Man", "Machine", "Material", "Method"])
-        problem = None
-        action = None
-        if main_4m != "ไม่มีปัญหา":
-            problems = df_problem[(df_problem["department"] == department) & (df_problem["main_4m"] == main_4m)]
-            problem = st.selectbox("📌 Problem", problems["problem"].tolist() if not problems.empty else ["อื่นๆ"])
-            actions = df_action[df_action["department"] == department]
-            action = st.selectbox("🛠 Action", actions["action"].tolist() if not actions.empty else ["อื่นๆ"])
 
+        main_4m_options = df_problem[df_problem["department"] == department]["main_4m"].unique().tolist()
+        main_4m = st.selectbox("เลือก 4M", ["ไม่มีปัญหา"] + main_4m_options)
+
+        problems = df_problem[(df_problem["department"] == department) &
+                              (df_problem["main_4m"] == main_4m)]["problem"].unique()
+        problem_selected = st.selectbox("📌 เลือกปัญหา", list(problems) + ["อื่น ๆ"])
+        if problem_selected == "อื่น ๆ":
+            problem_selected = st.text_input("📝 ระบุปัญหาเพิ่มเติม")
+
+        actions = df_action[df_action["department"] == department]["action"].unique()
+        action_selected = st.selectbox("🛠️ เลือก Action", list(actions) + ["อื่น ๆ"])
+        if action_selected == "อื่น ๆ":
+            action_selected = st.text_input("📝 ระบุ Action เพิ่มเติม")
+
+        # -------------------------------
+        # Downtime Section
+        # -------------------------------
         st.subheader("⏱️ รายการ Downtime")
-        if "downtime_list" not in st.session_state:
-            st.session_state.downtime_list = []
 
-        main_category = st.selectbox(
-            "Main Category",
-            df_downtime[df_downtime["department"] == department]["main_category"].unique()
-        )
-        sub_df = df_downtime[(df_downtime["department"] == department) & (df_downtime["main_category"] == main_category)]
-        sub_category = st.selectbox("Sub Category", sub_df["sub_category"].tolist())
-        downtime_min = st.number_input("Downtime (นาที)", min_value=0, step=1)
+        main_category_options = ["ไม่มี Downtime"] + df_downtime[df_downtime["department"] == department]["main_category"].unique().tolist()
+        main_category = st.selectbox("Main Category", main_category_options)
 
-        if st.form_submit_button("➕ เพิ่ม Downtime"):
-            loss_code = sub_df[sub_df["sub_category"] == sub_category]["loss_code"].values[0]
-            st.session_state.downtime_list.append({
-                "main_category": main_category,
-                "loss_code": loss_code,
-                "sub_category": sub_category,
-                "downtime_min": downtime_min
-            })
-            st.success("เพิ่ม Downtime แล้ว")
+        sub_category, downtime_min = None, 0
+        if main_category != "ไม่มี Downtime":
+            sub_category_options = df_downtime[(df_downtime["department"] == department) &
+                                               (df_downtime["main_category"] == main_category)]["sub_category"].unique()
+            sub_category = st.selectbox("Sub Category", list(sub_category_options) + ["อื่น ๆ"])
+            if sub_category == "อื่น ๆ":
+                sub_category = st.text_input("📝 ระบุ Sub Category เพิ่มเติม")
 
-        st.table(pd.DataFrame(st.session_state.downtime_list))
+            downtime_min = st.number_input("Downtime (นาที)", min_value=0, step=1)
 
         submitted = st.form_submit_button("✅ บันทึกข้อมูล")
         if submitted:
             with engine.begin() as conn:
-                # insert production record
                 res = conn.execute(text("""
                     INSERT INTO production_record
                     (log_date, shift, department, machine_name, part_no, woc_number,
@@ -159,21 +162,32 @@ if mode == "Production Record":
                     "untest_qty": int(untest_qty),
                     "speed": int(speed),
                     "main_4m": main_4m,
-                    "problem": problem,
-                    "action": action,
+                    "problem": problem_selected,
+                    "action": action_selected,
                     "emp_code": user["emp_code"],
                     "operator": user["emp_name"]
                 })
                 prod_id = res.fetchone()[0]
 
-                # insert downtime log
-                for d in st.session_state.downtime_list:
+                if main_category != "ไม่มี Downtime" and downtime_min > 0:
+                    loss_code = df_downtime[(df_downtime["department"] == department) &
+                                            (df_downtime["main_category"] == main_category) &
+                                            (df_downtime["sub_category"] == sub_category)]["loss_code"].values
+                    loss_code = loss_code[0] if len(loss_code) > 0 else "NA"
+
                     conn.execute(text("""
                         INSERT INTO downtime_log
                         (production_id, department, main_category, loss_code, sub_category, downtime_min)
                         VALUES (:production_id, :department, :main_category, :loss_code, :sub_category, :downtime_min)
-                    """), {**d, "production_id": prod_id, "department": department})
-            st.session_state.downtime_list = []
+                    """), {
+                        "production_id": prod_id,
+                        "department": department,
+                        "main_category": main_category,
+                        "loss_code": loss_code,
+                        "sub_category": sub_category,
+                        "downtime_min": downtime_min
+                    })
+
             st.success("✅ บันทึกเรียบร้อยแล้ว")
 
 # -------------------------------
