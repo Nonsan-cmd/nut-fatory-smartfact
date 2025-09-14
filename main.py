@@ -99,14 +99,17 @@ if mode == "📑 Production Record":
 
         # ✅ Start & End Time (เลือกชั่วโมง/นาทีแยก)
         st.markdown("### ⏱️ เวลาเริ่ม–เวลาจบ")
+        minutes_options = list(range(0, 60, 5))
+
         col1, col2, col3, col4 = st.columns(4)
         start_hour = col1.selectbox("Start Hour", list(range(0, 24)), index=7)
-        start_minute = col2.selectbox("Start Minute", list(range(0, 60, 5)), index=45)
+        start_minute = col2.selectbox("Start Minute", minutes_options, index=minutes_options.index(45))
         end_hour = col3.selectbox("End Hour", list(range(0, 24)), index=16)
-        end_minute = col4.selectbox("End Minute", list(range(0, 60, 5)), index=45)
+        end_minute = col4.selectbox("End Minute", minutes_options, index=minutes_options.index(45))
 
         start_time = time(start_hour, start_minute)
         end_time = time(end_hour, end_minute)
+
         work_minutes = int(
             (datetime.combine(date.today(), end_time) - datetime.combine(date.today(), start_time)).total_seconds() // 60
         )
