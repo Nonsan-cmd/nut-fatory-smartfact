@@ -57,11 +57,12 @@ df_machine = load_master("machine_list")
 df_part = load_master("part_master")
 df_downtime = load_master("downtime_master")
 df_problem = load_master("problem_master")
+df_action = load_master("action_master")  # ✅ ตารางใหม่
 
 # -------------------------------
 # UI Form
 # -------------------------------
-st.title("📑 Production Record (WOC + Time + Speed)")
+st.title("📑 Production Record (4M + Downtime Update)")
 
 if "downtimes" not in st.session_state:
     st.session_state.downtimes = []
@@ -107,26 +108,45 @@ with st.form("record_form", clear_on_submit=True):
     if operator_dept == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
 
-    actual_output = int(ok_qty) + int(ng_qty) + int(untest_qty)
-
     # ✅ Speed (เฉพาะ TP, FI)
     speed = None
     if operator_dept in ["TP", "FI"]:
         speed = st.number_input("⚡ Machine Speed (pcs/min)", min_value=0, step=1)
 
-    # ✅ Problem 4M
-    problem_4m = st.selectbox("⚠️ สาเหตุปัญหา (4M)", df_problem["problem"].unique() if not df_problem.empty else ["Man","Machine","Material","Method","Other"])
-    problem_remark = ""
-    if problem_4m == "Other":
-        problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม")
+    # ===============================
+    # 4M Problem Section
+    # ===============================
+    st.subheader("⚠️ สาเหตุปัญหา (4M)")
+
+    main_4m = st.selectbox("เลือก 4M", ["ไม่มีปัญหา", "Man", "Machine", "Material", "Method"])
+
+    problem_selected, action_selected, other_remark = None, None, None
+
+    if main_4m != "ไม่มีปัญหา":
+        # ✅ Problem filter by department + main_4m
+        problems = df_problem[
+            (df_problem["department"].str.strip() == operator_dept) &
+            (df_problem["main_4m"].str.strip() == main_4m)
+        ]["problem"].unique()
+
+        problem_selected = st.selectbox("📌 เลือกปัญหา", list(problems) + ["อื่น ๆ"] if len(problems) > 0 else ["อื่น ๆ"])
+        if problem_selected == "อื่น ๆ":
+            problem_selected = st.text_input("📝 ระบุปัญหาเพิ่มเติม")
+
+        # ✅ Action filter
+        actions = df_action["action"].unique() if not df_action.empty else ["Corrective", "Preventive", "Other"]
+        action_selected = st.selectbox("🛠️ เลือก Action", list(actions) + ["อื่น ๆ"])
+        if action_selected == "อื่น ๆ":
+            action_selected = st.text_input("📝 ระบุ Action เพิ่มเติม")
 
     # ===============================
-    # Downtime Section (หลายรายการ)
+    # Downtime Section
     # ===============================
     st.subheader("⏱️ รายการ Downtime")
 
     main_category = st.selectbox("Main Category", df_downtime["main_category"].unique() if not df_downtime.empty else [])
-    sub_category = st.selectbox("Sub Category", df_downtime[df_downtime["main_category"]==main_category]["sub_category"].unique() if not df_downtime.empty else [])
+    sub_options = df_downtime[df_downtime["main_category"] == main_category]["sub_category"].unique()
+    sub_category = st.selectbox("Sub Category", sub_options)
     minutes = st.number_input("Downtime (นาที)", min_value=0, step=1)
 
     if st.form_submit_button("➕ เพิ่ม Downtime"):
@@ -155,11 +175,11 @@ with st.form("record_form", clear_on_submit=True):
                         (log_date, shift, department, machine_name, part_no, woc_number,
                         start_time, end_time, work_minutes,
                         ok_qty, ng_qty, untest_qty, speed,
-                        problem_4m, problem_remark, emp_code, operator)
+                        main_4m, problem, action, emp_code, operator)
                         values (:log_date, :shift, :department, :machine_name, :part_no, :woc_number,
                         :start_time, :end_time, :work_minutes,
                         :ok_qty, :ng_qty, :untest_qty, :speed,
-                        :problem_4m, :problem_remark, :emp_code, :operator)
+                        :main_4m, :problem, :action, :emp_code, :operator)
                         returning id
                     """), {
                         "log_date": log_date,
@@ -175,8 +195,9 @@ with st.form("record_form", clear_on_submit=True):
                         "ng_qty": int(ng_qty),
                         "untest_qty": int(untest_qty),
                         "speed": speed,
-                        "problem_4m": problem_4m,
-                        "problem_remark": problem_remark,
+                        "main_4m": main_4m,
+                        "problem": problem_selected,
+                        "action": action_selected,
                         "emp_code": operator_code,
                         "operator": operator
                     })
@@ -210,6 +231,7 @@ try:
         select pr.id, pr.log_date, pr.shift, pr.department, pr.machine_name, pr.part_no,
                pr.woc_number, pr.start_time, pr.end_time, pr.work_minutes,
                pr.ok_qty, pr.ng_qty, pr.untest_qty, pr.output_qty, pr.speed,
+               pr.main_4m, pr.problem, pr.action,
                pr.operator,
                dt.main_category, dt.sub_category, dt.downtime_min
         from production_record pr
