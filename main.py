@@ -45,7 +45,7 @@ operator_dept = user["department"]
 st.sidebar.success(f"👷 {operator} ({operator_role})")
 
 # -------------------------------
-# โหลด Master Data
+# Load Master Data
 # -------------------------------
 def load_master(table):
     try:
@@ -62,7 +62,10 @@ df_problem = load_master("problem_master")
 # -------------------------------
 # UI Form
 # -------------------------------
-st.title("📑 Production Record (All-in-one)")
+st.title("📑 Production Record (with Multiple Downtime)")
+
+if "downtimes" not in st.session_state:
+    st.session_state.downtimes = []
 
 with st.form("record_form", clear_on_submit=True):
     log_date = st.date_input("📅 วันทำงาน", value=date.today())
@@ -79,27 +82,45 @@ with st.form("record_form", clear_on_submit=True):
     if department == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
 
-    main_category = st.selectbox("⏱️ Downtime Main Category", df_downtime["main_category"].unique() if not df_downtime.empty else [])
-    sub_category = st.selectbox("📌 Downtime Sub Category", df_downtime[df_downtime["main_category"]==main_category]["sub_category"].unique() if not df_downtime.empty else [])
-    downtime_min = st.number_input("⏱️ Downtime (นาที)", min_value=0, step=1)
-
     problem_4m = st.selectbox("⚠️ สาเหตุปัญหา (4M)", df_problem["problem"].unique() if not df_problem.empty else ["Man","Machine","Material","Method","Other"])
     problem_remark = ""
     if problem_4m == "Other":
         problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม")
 
+    # ===============================
+    # Downtime Section
+    # ===============================
+    st.subheader("⏱️ รายการ Downtime")
+
+    main_category = st.selectbox("Main Category", df_downtime["main_category"].unique() if not df_downtime.empty else [])
+    sub_category = st.selectbox("Sub Category", df_downtime[df_downtime["main_category"]==main_category]["sub_category"].unique() if not df_downtime.empty else [])
+    minutes = st.number_input("Downtime (นาที)", min_value=0, step=1)
+
+    if st.form_submit_button("➕ เพิ่ม Downtime"):
+        st.session_state.downtimes.append({
+            "main": main_category,
+            "sub": sub_category,
+            "minutes": minutes
+        })
+
+    if st.session_state.downtimes:
+        st.table(st.session_state.downtimes)
+
+    # ===============================
+    # Submit All
+    # ===============================
     submitted = st.form_submit_button("✅ บันทึกข้อมูล")
     if submitted:
         try:
             with engine.begin() as conn:
-                conn.execute(text("""
-                    insert into production_record 
+                # insert production record
+                result = conn.execute(text("""
+                    insert into production_record
                     (log_date, shift, department, machine_name, part_no, ok_qty, ng_qty, untest_qty,
-                    main_category, sub_category, downtime_min, problem_4m, problem_remark,
-                    emp_code, operator)
+                    problem_4m, problem_remark, emp_code, operator)
                     values (:log_date, :shift, :department, :machine_name, :part_no, :ok_qty, :ng_qty, :untest_qty,
-                    :main_category, :sub_category, :downtime_min, :problem_4m, :problem_remark,
-                    :emp_code, :operator)
+                    :problem_4m, :problem_remark, :emp_code, :operator)
+                    returning id
                 """), {
                     "log_date": log_date,
                     "shift": shift,
@@ -109,15 +130,29 @@ with st.form("record_form", clear_on_submit=True):
                     "ok_qty": int(ok_qty),
                     "ng_qty": int(ng_qty),
                     "untest_qty": int(untest_qty),
-                    "main_category": main_category,
-                    "sub_category": sub_category,
-                    "downtime_min": int(downtime_min),
                     "problem_4m": problem_4m,
                     "problem_remark": problem_remark,
                     "emp_code": operator_code,
                     "operator": operator
                 })
+                prod_id = result.scalar_one()
+
+                # insert downtime logs
+                for dt in st.session_state.downtimes:
+                    conn.execute(text("""
+                        insert into downtime_log (production_id, main_category, loss_code, sub_category, downtime_min)
+                        values (:pid, :main, 
+                               (select loss_code from downtime_master where sub_category=:sub limit 1), 
+                               :sub, :minutes)
+                    """), {
+                        "pid": prod_id,
+                        "main": dt["main"],
+                        "sub": dt["sub"],
+                        "minutes": int(dt["minutes"])
+                    })
+
             st.success("✅ บันทึกเรียบร้อยแล้ว")
+            st.session_state.downtimes = []  # reset หลังบันทึก
         except Exception as e:
             st.error(f"❌ Error: {e}")
 
@@ -126,7 +161,15 @@ with st.form("record_form", clear_on_submit=True):
 # -------------------------------
 st.subheader("📋 ข้อมูลล่าสุด")
 try:
-    df = pd.read_sql("select * from production_record order by created_at desc limit 10", engine)
+    df = pd.read_sql("""
+        select pr.id, pr.log_date, pr.shift, pr.department, pr.machine_name, pr.part_no,
+               pr.ok_qty, pr.ng_qty, pr.untest_qty, pr.output_qty, pr.operator,
+               dt.main_category, dt.sub_category, dt.downtime_min
+        from production_record pr
+        left join downtime_log dt on pr.id = dt.production_id
+        order by pr.created_at desc
+        limit 20
+    """, engine)
     st.dataframe(df, use_container_width=True)
 except Exception as e:
     st.warning(f"ไม่สามารถโหลดข้อมูล: {e}")
