@@ -61,7 +61,7 @@ df_problem = load_master("problem_master")
 # -------------------------------
 # UI Form
 # -------------------------------
-st.title("📑 Production Record (with WOC, Time, Speed)")
+st.title("📑 Production Record (WOC + Time + Speed)")
 
 if "downtimes" not in st.session_state:
     st.session_state.downtimes = []
@@ -70,7 +70,7 @@ with st.form("record_form", clear_on_submit=True):
     log_date = st.date_input("📅 วันทำงาน", value=date.today())
     shift = st.selectbox("🕒 กะ", ["เช้า", "โอทีเช้า", "ดึก", "โอทีกะดึก"])
 
-    # ✅ แผนกมาจาก user_roles
+    # ✅ แผนกจาก user_roles
     st.text_input("🏭 แผนก (อ้างอิงจาก Login)", operator_dept, disabled=True)
 
     # ✅ เครื่องจักร filter ตามแผนก
@@ -90,7 +90,6 @@ with st.form("record_form", clear_on_submit=True):
     start_time = st.time_input("⏱️ เวลาเริ่ม")
     end_time = st.time_input("⏱️ เวลาจบ")
 
-    # คำนวณ work_minutes
     work_minutes = None
     if start_time and end_time:
         start_dt = datetime.combine(date.today(), start_time)
@@ -107,6 +106,8 @@ with st.form("record_form", clear_on_submit=True):
     untest_qty = 0
     if operator_dept == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
+
+    actual_output = int(ok_qty) + int(ng_qty) + int(untest_qty)
 
     # ✅ Speed (เฉพาะ TP, FI)
     speed = None
