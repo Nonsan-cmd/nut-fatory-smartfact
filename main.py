@@ -40,7 +40,7 @@ user = st.session_state.user
 operator = user["emp_name"]
 operator_code = user["emp_code"]
 operator_role = user["role"]
-operator_dept = user["department"]
+operator_dept = str(user["department"]).strip() if user["department"] else None
 
 st.sidebar.success(f"👷 {operator} ({operator_role})")
 
@@ -53,7 +53,6 @@ def load_master(table):
     except:
         return pd.DataFrame()
 
-df_dept = load_master("department_master")
 df_machine = load_master("machine_list")
 df_part = load_master("part_master")
 df_downtime = load_master("downtime_master")
@@ -71,16 +70,12 @@ with st.form("record_form", clear_on_submit=True):
     log_date = st.date_input("📅 วันทำงาน", value=date.today())
     shift = st.selectbox("🕒 กะ", ["เช้า", "โอทีเช้า", "ดึก", "โอทีกะดึก"])
 
-    # ✅ Department
-    dept_selected = st.selectbox(
-        "🏭 แผนก",
-        df_dept["department_name"].unique() if not df_dept.empty else ["FM", "TP", "FI"]
-    )
-    dept_selected = str(dept_selected).strip()
+    # ✅ แผนกมาจาก user_roles
+    st.text_input("🏭 แผนก (อ้างอิงจาก Login)", operator_dept, disabled=True)
 
-    # ✅ Machine ตาม Department
+    # ✅ เครื่องจักร filter ตามแผนก
     machine_options = (
-        df_machine[df_machine["department"].str.strip() == dept_selected]["machine_name"].unique()
+        df_machine[df_machine["department"].str.strip() == operator_dept]["machine_name"].unique()
         if not df_machine.empty else []
     )
     machine_name = st.selectbox("⚙️ เครื่องจักร", machine_options)
@@ -93,7 +88,7 @@ with st.form("record_form", clear_on_submit=True):
     ng_qty = st.number_input("❌ จำนวน NG", min_value=0, step=1)
 
     untest_qty = 0
-    if dept_selected == "FI":
+    if operator_dept == "FI":
         untest_qty = st.number_input("🔍 Untest Qty (เฉพาะ FI)", min_value=0, step=1)
 
     # ✅ Problem 4M
@@ -139,7 +134,7 @@ with st.form("record_form", clear_on_submit=True):
                 """), {
                     "log_date": log_date,
                     "shift": shift,
-                    "department": dept_selected,
+                    "department": operator_dept,
                     "machine_name": machine_name,
                     "part_no": part_no,
                     "ok_qty": int(ok_qty),
