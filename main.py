@@ -8,16 +8,11 @@ from datetime import date, datetime
 # ================================
 st.set_page_config(page_title="Factory App", page_icon="🏭", layout="wide")
 
-# โหลดค่า SUPABASE จาก secrets.toml
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 DB_CONN = st.secrets.get("postgres", {}).get("conn_str", "")
-
 if not DB_CONN:
     st.error("❌ Missing Supabase connection string. Please set in secrets.toml")
     st.stop()
 
-# connect database
 engine = create_engine(DB_CONN)
 
 # ================================
@@ -45,7 +40,6 @@ if "user" not in st.session_state:
                 st.error(f"❌ Error: {e}")
     st.stop()
 
-# ข้อมูลผู้ใช้
 user = st.session_state.user
 operator = user["emp_name"]
 operator_code = user["emp_code"]
@@ -72,7 +66,7 @@ df_action = load_master("action_master")
 df_downtime = load_master("downtime_master")
 
 # ================================
-# MODE : PRODUCTION RECORD
+# PRODUCTION RECORD
 # ================================
 if mode == "Production Record":
     st.title("📑 Production Record")
@@ -81,18 +75,14 @@ if mode == "Production Record":
         log_date = st.date_input("📅 วันทำงาน", value=date.today())
         shift = st.selectbox("🕒 กะ", ["เช้า", "โอทีเช้า", "ดึก", "โอทีกะดึก"])
 
-        department = operator_dept
+        department = operator_dept or ""
         st.text_input("🏭 แผนก", value=department, disabled=True)
 
-        machine_name = st.selectbox(
-            "⚙️ เครื่องจักร",
-            df_machine[df_machine["department"] == department]["machine_name"].unique()
-            if not df_machine.empty else []
-        )
-        part_no = st.selectbox(
-            "🔩 Part No.",
-            df_part["part_no"].unique() if not df_part.empty else []
-        )
+        machines = df_machine[df_machine["department"] == department]["machine_name"].unique() if not df_machine.empty else []
+        machine_name = st.selectbox("⚙️ เครื่องจักร", machines)
+
+        parts = df_part["part_no"].unique() if not df_part.empty else []
+        part_no = st.selectbox("🔩 Part No.", parts)
 
         woc_number = st.text_input("📄 WOC Number")
 
@@ -125,24 +115,23 @@ if mode == "Production Record":
 
         # ===== 4M Section =====
         st.subheader("⚠️ สาเหตุปัญหา (4M)")
-        main_4m = st.selectbox("เลือก 4M", df_problem[df_problem["department"] == department]["main_4m"].unique())
-        problem = st.selectbox("📌 เลือกปัญหา",
-                               df_problem[(df_problem["department"] == department) & (df_problem["main_4m"] == main_4m)]["problem"].unique())
-        problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม", placeholder="ใส่ถ้ามี")
+        problems = df_problem[df_problem["department"] == department]
+        actions = df_action[df_action["department"] == department]
 
-        action = st.selectbox("🛠️ เลือก Action",
-                              df_action[df_action["department"] == department]["action"].unique())
+        main_4m = st.selectbox("เลือก 4M", problems["main_4m"].unique() if not problems.empty else [])
+        problem = st.selectbox("📌 เลือกปัญหา", problems[problems["main_4m"] == main_4m]["problem"].unique() if not problems.empty else [])
+        problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม", placeholder="ใส่ถ้ามี")
+        action = st.selectbox("🛠️ เลือก Action", actions["action"].unique() if not actions.empty else [])
 
         # ===== Downtime Section =====
         st.subheader("⏱️ รายการ Downtime")
         downtime_records = []
-        max_downtime = 3  # ให้เลือกได้สูงสุด 3 รายการ
+        max_downtime = 3
         for i in range(max_downtime):
             st.markdown(f"**Downtime #{i+1}**")
-            main_category = st.selectbox(f"Main Category #{i+1}",
-                                         df_downtime[df_downtime["department"] == department]["main_category"].unique())
-            sub_category = st.selectbox(f"Sub Category #{i+1}",
-                                        df_downtime[(df_downtime["department"] == department) & (df_downtime["main_category"] == main_category)]["sub_category"].unique())
+            dt_dept = df_downtime[df_downtime["department"] == department]
+            main_category = st.selectbox(f"Main Category #{i+1}", dt_dept["main_category"].unique() if not dt_dept.empty else [])
+            sub_category = st.selectbox(f"Sub Category #{i+1}", dt_dept[dt_dept["main_category"] == main_category]["sub_category"].unique() if not dt_dept.empty else [])
             col1, col2 = st.columns(2)
             with col1:
                 dt_start_h = st.selectbox(f"Start Hour DT#{i+1}", list(range(0, 24)))
@@ -211,7 +200,7 @@ if mode == "Production Record":
                 st.error(f"❌ Error: {e}")
 
 # ================================
-# MODE : REPORT
+# REPORT
 # ================================
 elif mode == "Report":
     if operator_role not in ["Supervisor", "Admin", "Engineer", "Manager"]:
