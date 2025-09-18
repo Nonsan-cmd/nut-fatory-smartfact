@@ -1,7 +1,7 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
-from datetime import datetime, date, time as dt_time, timedelta
+from datetime import datetime, date, time as dt_time
 
 # ================================
 # CONFIG
@@ -57,16 +57,40 @@ mode = st.sidebar.radio("เลือกโหมด", ["Production Record", "Re
 if mode == "Production Record":
     st.header("📒 บันทึกการผลิต")
 
+    # init downtime count
+    if "downtime_count" not in st.session_state:
+        st.session_state.downtime_count = 1
+
+    # ปุ่มเพิ่ม downtime อยู่นอกฟอร์ม
+    if st.button("➕ เพิ่ม Downtime"):
+        st.session_state.downtime_count += 1
+
     with st.form("prod_form", clear_on_submit=True):
         log_date = st.date_input("📅 วันที่", date.today())
         shift = st.selectbox("กะการทำงาน", ["Day", "Night"])
 
         # Load master data
-        df_machine = pd.read_sql("select * from machine_list where department=:dept", engine, params={"dept": user["department"]})
+        df_machine = pd.read_sql(
+            "select * from machine_list where department=:dept",
+            engine,
+            params={"dept": user["department"]}
+        )
         df_part = pd.read_sql("select * from part_master", engine)
-        df_problem = pd.read_sql("select * from problem_master where department=:dept", engine, params={"dept": user["department"]})
-        df_action = pd.read_sql("select * from action_master where department=:dept", engine, params={"dept": user["department"]})
-        df_downtime = pd.read_sql("select * from downtime_master where department=:dept", engine, params={"dept": user["department"]})
+        df_problem = pd.read_sql(
+            "select * from problem_master where department=:dept",
+            engine,
+            params={"dept": user["department"]}
+        )
+        df_action = pd.read_sql(
+            "select * from action_master where department=:dept",
+            engine,
+            params={"dept": user["department"]}
+        )
+        df_downtime = pd.read_sql(
+            "select * from downtime_master where department=:dept",
+            engine,
+            params={"dept": user["department"]}
+        )
 
         machine = st.selectbox("🛠️ เครื่องจักร", df_machine["machine_name"].tolist())
         part_no = st.selectbox("รหัสงาน (Part No)", df_part["part_no"].tolist())
@@ -90,13 +114,6 @@ if mode == "Production Record":
 
         # ========== Downtime ==========
         st.subheader("⏱️ รายการ Downtime")
-
-        if "downtime_count" not in st.session_state:
-            st.session_state.downtime_count = 1
-
-        if st.form_submit_button("➕ เพิ่ม Downtime"):
-            st.session_state.downtime_count += 1
-
         downtime_entries = []
         for i in range(st.session_state.downtime_count):
             st.markdown(f"### Downtime #{i+1}")
@@ -182,8 +199,33 @@ if mode == "Production Record":
 # ================================
 if mode == "Report":
     st.header("📊 รายงานการผลิต")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        start_date = st.date_input("📅 เริ่มต้น", value=date.today().replace(day=1))
+    with col2:
+        end_date = st.date_input("📅 สิ้นสุด", value=date.today())
+    with col3:
+        machine_filter = st.text_input("🛠️ เครื่องจักร (ใส่บางส่วนได้)")
+    with col4:
+        part_filter = st.text_input("🔩 Part No (ใส่บางส่วนได้)")
+
+    query = "select * from production_record where department=:dept and log_date between :s and :e"
+    params = {"dept": user["department"], "s": start_date, "e": end_date}
+
+    if machine_filter:
+        query += " and machine_name ilike :machine"
+        params["machine"] = f"%{machine_filter}%"
+    if part_filter:
+        query += " and part_no ilike :part"
+        params["part"] = f"%{part_filter}%"
+
     try:
-        df = pd.read_sql("select * from production_record where department=:dept order by created_at desc", engine, params={"dept": user["department"]})
+        df = pd.read_sql(query + " order by created_at desc", engine, params=params)
         st.dataframe(df, use_container_width=True)
+
+        if not df.empty:
+            csv = df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("📥 Download CSV", csv, "report.csv", "text/csv")
     except Exception as e:
         st.error(f"โหลดรายงานไม่สำเร็จ: {e}")
