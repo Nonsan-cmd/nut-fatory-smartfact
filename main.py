@@ -57,7 +57,6 @@ mode = st.sidebar.radio("เลือกโหมด", ["Production Record", "Re
 if mode == "Production Record":
     st.header("📒 บันทึกการผลิต")
 
-    # init downtime count
     if "downtime_count" not in st.session_state:
         st.session_state.downtime_count = 1
 
@@ -69,31 +68,50 @@ if mode == "Production Record":
         log_date = st.date_input("📅 วันที่", date.today())
         shift = st.selectbox("กะการทำงาน", ["Day", "Night"])
 
-        # Load master data
-        df_machine = pd.read_sql(
-            "select * from machine_list where department=:dept",
-            engine,
-            params={"dept": user["department"]}
-        )
-        df_part = pd.read_sql("select * from part_master", engine)
-        df_problem = pd.read_sql(
-            "select * from problem_master where department=:dept",
-            engine,
-            params={"dept": user["department"]}
-        )
-        df_action = pd.read_sql(
-            "select * from action_master where department=:dept",
-            engine,
-            params={"dept": user["department"]}
-        )
-        df_downtime = pd.read_sql(
-            "select * from downtime_master where department=:dept",
-            engine,
-            params={"dept": user["department"]}
-        )
+        # โหลด master data โดยกัน error กรณี dept ไม่มีใน table
+        try:
+            df_machine = pd.read_sql(
+                "select * from machine_list where department=:dept",
+                engine,
+                params={"dept": user.get("department")}
+            )
+        except:
+            df_machine = pd.DataFrame(columns=["machine_name"])
 
-        machine = st.selectbox("🛠️ เครื่องจักร", df_machine["machine_name"].tolist())
-        part_no = st.selectbox("รหัสงาน (Part No)", df_part["part_no"].tolist())
+        try:
+            df_part = pd.read_sql("select * from part_master", engine)
+        except:
+            df_part = pd.DataFrame(columns=["part_no"])
+
+        try:
+            df_problem = pd.read_sql(
+                "select * from problem_master where department=:dept",
+                engine,
+                params={"dept": user.get("department")}
+            )
+        except:
+            df_problem = pd.DataFrame(columns=["problem"])
+
+        try:
+            df_action = pd.read_sql(
+                "select * from action_master where department=:dept",
+                engine,
+                params={"dept": user.get("department")}
+            )
+        except:
+            df_action = pd.DataFrame(columns=["action"])
+
+        try:
+            df_downtime = pd.read_sql(
+                "select * from downtime_master where department=:dept",
+                engine,
+                params={"dept": user.get("department")}
+            )
+        except:
+            df_downtime = pd.DataFrame(columns=["sub_category"])
+
+        machine = st.selectbox("🛠️ เครื่องจักร", df_machine["machine_name"].tolist() if not df_machine.empty else [])
+        part_no = st.selectbox("รหัสงาน (Part No)", df_part["part_no"].tolist() if not df_part.empty else [])
         woc_number = st.text_input("WOC Number")
 
         start_time = st.time_input("⏱️ เวลาเริ่ม", value=dt_time(8,0))
@@ -157,7 +175,7 @@ if mode == "Production Record":
                     """), {
                         "log_date": log_date,
                         "shift": shift,
-                        "department": user["department"],
+                        "department": user.get("department"),
                         "machine": machine,
                         "part_no": part_no,
                         "woc_number": woc_number,
@@ -184,7 +202,7 @@ if mode == "Production Record":
                                 values (:pid, :dept, :main_cat, :loss_code, :sub_category, :dt_min)
                             """), {
                                 "pid": prod_id,
-                                "dept": user["department"],
+                                "dept": user.get("department"),
                                 "main_cat": "N/A",
                                 "loss_code": "N/A",
                                 "sub_category": d["sub_category"],
@@ -193,39 +211,3 @@ if mode == "Production Record":
                 st.success("✅ บันทึกข้อมูลสำเร็จ")
             except Exception as e:
                 st.error(f"DB Error: {e}")
-
-# ================================
-# REPORT
-# ================================
-if mode == "Report":
-    st.header("📊 รายงานการผลิต")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        start_date = st.date_input("📅 เริ่มต้น", value=date.today().replace(day=1))
-    with col2:
-        end_date = st.date_input("📅 สิ้นสุด", value=date.today())
-    with col3:
-        machine_filter = st.text_input("🛠️ เครื่องจักร (ใส่บางส่วนได้)")
-    with col4:
-        part_filter = st.text_input("🔩 Part No (ใส่บางส่วนได้)")
-
-    query = "select * from production_record where department=:dept and log_date between :s and :e"
-    params = {"dept": user["department"], "s": start_date, "e": end_date}
-
-    if machine_filter:
-        query += " and machine_name ilike :machine"
-        params["machine"] = f"%{machine_filter}%"
-    if part_filter:
-        query += " and part_no ilike :part"
-        params["part"] = f"%{part_filter}%"
-
-    try:
-        df = pd.read_sql(query + " order by created_at desc", engine, params=params)
-        st.dataframe(df, use_container_width=True)
-
-        if not df.empty:
-            csv = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("📥 Download CSV", csv, "report.csv", "text/csv")
-    except Exception as e:
-        st.error(f"โหลดรายงานไม่สำเร็จ: {e}")
