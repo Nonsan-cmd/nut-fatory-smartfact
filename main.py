@@ -10,6 +10,7 @@ st.set_page_config(page_title="Factory App", page_icon="🏭", layout="wide")
 
 # โหลดค่า SUPABASE จาก secrets.toml
 DB_CONN = st.secrets.get("postgres", {}).get("conn_str", "")
+
 if not DB_CONN:
     st.error("❌ Missing Supabase connection string. Please set in secrets.toml")
     st.stop()
@@ -122,13 +123,13 @@ if mode == "Production Record":
 
         # ===== 4M Section =====
         st.subheader("⚠️ สาเหตุปัญหา (4M)")
-        main_4m = st.selectbox("เลือก 4M", df_problem[df_problem["department"] == department]["main_4m"].unique())
+        main_4m = st.selectbox("เลือก 4M", ["ไม่มีปัญหา"] + df_problem[df_problem["department"] == department]["main_4m"].unique().tolist())
         problem = st.selectbox("📌 เลือกปัญหา",
-                               df_problem[df_problem["department"] == department]["problem"].unique())
-        problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม", placeholder="ใส่ถ้ามี")
+                               ["ไม่มีปัญหา"] + df_problem[df_problem["department"] == department]["problem"].unique().tolist())
+        problem_remark = st.text_area("📝 ระบุปัญหาเพิ่มเติม (Problem)", placeholder="ใส่ถ้ามี")
 
         action = st.selectbox("🛠️ เลือก Action",
-                              df_action[df_action["department"] == department]["action"].unique())
+                              ["ไม่มี Action"] + df_action[df_action["department"] == department]["action"].unique().tolist())
         action_remark = st.text_area("📝 ระบุ Action เพิ่มเติม", placeholder="ใส่ถ้ามี")
 
         # ===== Downtime Section =====
@@ -137,10 +138,18 @@ if mode == "Production Record":
         max_downtime = 3  # ให้เลือกได้สูงสุด 3 รายการ
         for i in range(max_downtime):
             st.markdown(f"**Downtime #{i+1}**")
-            main_category = st.selectbox(f"Main Category #{i+1}",
-                                         df_downtime[df_downtime["department"] == department]["main_category"].unique())
-            sub_category = st.selectbox(f"Sub Category #{i+1}",
-                                        df_downtime[df_downtime["department"] == department]["sub_category"].unique())
+            main_category = st.selectbox(
+                f"Main Category #{i+1}",
+                ["ไม่มี Downtime"] + df_downtime[df_downtime["department"] == department]["main_category"].unique().tolist()
+            )
+            sub_category = st.selectbox(
+                f"Sub Category #{i+1}",
+                ["ไม่มี Downtime"] + df_downtime[
+                    (df_downtime["department"] == department) &
+                    (df_downtime["main_category"] == main_category)
+                ]["sub_category"].unique().tolist()
+            )
+
             col1, col2 = st.columns(2)
             with col1:
                 dt_start_h = st.selectbox(f"Start Hour DT#{i+1}", list(range(0, 24)))
@@ -148,10 +157,13 @@ if mode == "Production Record":
             with col2:
                 dt_end_h = st.selectbox(f"End Hour DT#{i+1}", list(range(0, 24)))
                 dt_end_m = st.selectbox(f"End Min DT#{i+1}", list(range(0, 60, 5)))
+
             dt_minutes = ((dt_end_h * 60 + dt_end_m) - (dt_start_h * 60 + dt_start_m))
             if dt_minutes < 0:
                 dt_minutes += 24 * 60
-            dt_remark = st.text_area(f"📝 ระบุ Downtime เพิ่มเติม #{i+1}", placeholder="ใส่ถ้ามี")
+
+            dt_remark = st.text_area(f"📝 Downtime Remark #{i+1}", placeholder="ใส่ถ้ามี")
+
             downtime_records.append((main_category, sub_category, dt_minutes, dt_remark))
 
         submitted = st.form_submit_button("✅ บันทึกข้อมูล")
@@ -166,11 +178,10 @@ if mode == "Production Record":
                          speed, main_4m, problem, problem_remark, action, action_remark,
                          emp_code, operator)
                         VALUES
-                        (:log_date, :shift, :department, :machine_name, :part_no, :woc_number,
-                         :start_time, :end_time, :work_minutes, :ok_qty, :ng_qty, :untest_qty,
-                         :speed, :main_4m, :problem, :problem_remark, :action, :action_remark,
-                         :emp_code, :operator)
-                        RETURNING id
+                        (:log_date,:shift,:department,:machine_name,:part_no,:woc_number,
+                         :start_time,:end_time,:work_minutes,:ok_qty,:ng_qty,:untest_qty,
+                         :speed,:main_4m,:problem,:problem_remark,:action,:action_remark,
+                         :emp_code,:operator) RETURNING id
                     """), {
                         "log_date": log_date,
                         "shift": shift,
@@ -197,14 +208,22 @@ if mode == "Production Record":
 
                     # insert downtime
                     for (mc, sc, mins, remark) in downtime_records:
-                        if mins > 0:
+                        if mc != "ไม่มี Downtime" and sc != "ไม่มี Downtime":
+                            row = df_downtime[
+                                (df_downtime["department"] == department) &
+                                (df_downtime["main_category"] == mc) &
+                                (df_downtime["sub_category"] == sc)
+                            ]
+                            loss_code = row["loss_code"].iloc[0] if not row.empty else "N/A"
+
                             conn.execute(text("""
-                                INSERT INTO downtime_log (production_id, department, main_category, sub_category, downtime_min, remark)
-                                VALUES (:pid, :dept, :mc, :sc, :mins, :remark)
+                                INSERT INTO downtime_log (production_id, department, main_category, loss_code, sub_category, downtime_min, remark)
+                                VALUES (:pid, :dept, :mc, :lc, :sc, :mins, :remark)
                             """), {
                                 "pid": prod_id,
                                 "dept": department,
                                 "mc": mc,
+                                "lc": loss_code,
                                 "sc": sc,
                                 "mins": mins,
                                 "remark": remark
